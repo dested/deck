@@ -129,6 +129,21 @@ export async function registerGitRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/git/push",
+    async (req, reply) => {
+      const cwd = repo(req.params.id);
+      if (!cwd) return reply.code(404).send({ error: "project not found" });
+      try {
+        const res = await git.push(cwd);
+        notify(req.params.id);
+        return res;
+      } catch (err) {
+        return reply.code(400).send({ error: String(err) });
+      }
+    },
+  );
+
   app.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
     "/projects/:id/git/log",
     async (req, reply) => {

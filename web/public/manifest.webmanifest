@@ -1,0 +1,16 @@
+{
+  "name": "Deck",
+  "short_name": "Deck",
+  "description": "Localhost mission-control for projects and Claude Code agents.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#131418",
+  "theme_color": "#131418",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ]
+}

@@ -86,6 +86,8 @@ export function GitTab({ projectId }: { projectId: string }) {
         <CommitBox
           projectId={projectId}
           stagedCount={status?.staged.length ?? 0}
+          aheadBehind={status?.aheadBehind ?? null}
+          hasUpstream={!!status?.upstream}
           onCommitted={refresh}
         />
         <LogPanel

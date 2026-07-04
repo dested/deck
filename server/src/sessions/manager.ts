@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Session } from "@deck/shared";
+import type { AgentStats, Session } from "@deck/shared";
 import { ptyManager, type PtyRecord, type PtyKind } from "../pty/manager.js";
 import { projectRegistry } from "../projects/registry.js";
 import { getState, updateState } from "../state.js";
@@ -120,11 +120,32 @@ class SessionManager {
     return true;
   }
 
+  // Fully remove an owned session from the live view — even a zombie whose pty
+  // already died without emitting exit (so `kill` did nothing and the card was
+  // stuck). Disposes the pty, drops the record, prunes its accumulated state,
+  // and tells clients to remove the card. Returns false for external sessions.
+  forceClose(id: string): boolean {
+    if (!this.owned.has(id)) return false;
+    ptyManager.dispose(id);
+    this.owned.delete(id);
+    this.unread.delete(id);
+    this.lastKey.delete(id);
+    updateState((s) => {
+      delete s.sessionNames[id];
+      delete s.sessionGroups[id];
+    });
+    this.publishRemoved(id);
+    this.syncRunningCounts();
+    return true;
+  }
+
   rename(id: string, name: string) {
     updateState((s) => {
       s.sessionNames[id] = name;
     });
-    if (this.owned.has(id)) this.publishOwned(id);
+    // publishById covers external sessions too, so renaming an agent live-
+    // updates its card (previously only owned sessions re-published).
+    this.publishById(id);
   }
 
   assignGroup(id: string, groupId: string | null) {
@@ -206,9 +227,13 @@ class SessionManager {
     let status: Session["status"];
     let lastActivityLine: string | null = null;
     let title: string | null = null;
+    let stats: AgentStats | null = null;
 
     if (rec.status === "exited") {
       status = "exited";
+      if (rec.kind === "claude" && rec.transcriptSessionId) {
+        stats = transcriptRegistry.describe(rec.transcriptSessionId)?.stats ?? null;
+      }
     } else if (rec.kind === "claude" && rec.transcriptSessionId) {
       // Owned claude status/attention comes from its transcript (§7.4).
       const d = transcriptRegistry.describe(rec.transcriptSessionId);
@@ -216,6 +241,7 @@ class SessionManager {
         status = d.status === "stale" ? "idle" : d.status;
         lastActivityLine = d.lastActivityLine;
         title = d.title;
+        stats = d.stats;
       } else {
         status = now - rec.lastActivityAt < WORKING_WINDOW_MS ? "working" : "idle";
       }
@@ -241,6 +267,7 @@ class SessionManager {
       lastActivityLine,
       unread: this.unread.has(rec.id),
       title,
+      stats,
     };
   }
 

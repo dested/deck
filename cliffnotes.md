@@ -8,6 +8,51 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
 ---
 
+## Recent UX fixes (2026-07-04, batch 2)
+
+- **Push, not just commit.** `git/service.ts push()` (auto `-u origin <branch>`
+  when no upstream, keys off exit code since git prints progress to stderr) →
+  `POST /projects/:id/git/push` → `api.gitPush` → CommitBox now has a **Push**
+  button (shows ahead count, disabled when tracking & up-to-date) plus a
+  **Commit & push** item in the dropdown. GitTab passes `aheadBehind`/`upstream`.
+- **Rename sessions AND agents.** `sessionManager.rename` now calls
+  `publishById` (was owned-only) so renaming an *external* agent live-updates its
+  card. Added **Rename** to `SessionContextMenu` (sidebar right-click) which
+  drives an inline edit in `SessionRow`; the session header title-click rename
+  still works. External renames were already persisted in `state.sessionNames`
+  and honored by `toSession`.
+- **Zombie owned sessions are now closeable.** A claude whose pty died without
+  emitting exit got stuck `idle` and `kill` did nothing. New
+  `sessionManager.forceClose(id)` = `ptyManager.dispose` + drop from owned +
+  **prune `sessionNames`/`sessionGroups`** + `sessions.removed` + resync counts.
+  `/sessions/:id/dismiss` (owned branch) routes through it; client `closeSession`
+  now optimistically removes owned too (one unified X everywhere). Natural exit
+  still leaves a readable "exited" tab — force-remove only on explicit close.
+  Claude sessions stay re-openable from the project's Agents history.
+- **Duplicate agent card fixed (two layers).** Server: `transcriptRegistry.
+  onFileChanged` was publishing an owned session's transcript as an `external`
+  twin (different id → two cards). It now skips the publish when `ownedChecker()`
+  owns that transcript and retracts any stray external card. Client: `AgentsTab`
+  also drops any external session whose id ∈ the owned sessions' transcript ids
+  (`isTwin`) so the dup is gone on a plain web reload even before a server
+  restart. (`tickExternal` already guarded this.)
+- **Agents page spruced up** (`AgentsTab.tsx`). Live agents are now rich cards:
+  status-tinted kind badge, ai-title as the heading (session name secondary),
+  the live activity line, and a chip row — **model / messages / tools / edits /
+  last-activity / active-duration** + attached·external tag + unread dot.
+  Right-click any card = SessionContextMenu (restart/close). History rows show
+  model + message/edit counts. Stats come from a new server enrichment:
+  `shared` `AgentStats` on `Session.stats`, `status.ts computeStats`, parser now
+  captures `ParsedTranscript.model` (last non-synthetic `message.model`), and
+  both `registry.toSession`/`describe` + `sessionManager.toSession` populate it.
+  Stats need the restarted server; cards degrade gracefully without them.
+- **Project sort drops `.git/FETCH_HEAD`** from `activityAt` (`scanner.ts`) — a
+  background `git fetch` is not user activity and was floating long-untouched
+  projects up. Sort is still: pinned → `activityAt` desc → name. NOTE: a recent
+  claude **transcript** in a project's folder still counts as activity, so a
+  stray/short session there will float it (see `Drop FETCH_HEAD + transcript`
+  option if that's unwanted). "Pin" is the star-to-top feature.
+
 ## Recent UX fixes (2026-07-04, post-M6)
 
 - **Owned claude view is terminal-first** (`components/session/ClaudeSessionView.tsx`).
@@ -74,7 +119,21 @@ bun install                      # once
 bun run dev                      # server (12345) + Vite (12346, proxies /api,/ws) — open http://127.0.0.1:12346
 bun run build && bun start       # prod: build web, serve everything on http://127.0.0.1:12345
 bun run typecheck                # tsc --noEmit for both packages
+deck.cmd                         # launch Deck as a STANDALONE APP WINDOW (see below)
 ```
+
+**Standalone app window (not a browser tab).** `deck.cmd` → `deck.ps1`: ensures
+the prod server is up on 12345 (builds once if `web/dist` missing, then `bun
+start` detached), then opens Deck in a chromeless Edge/Chrome `--app` window with
+a dedicated `--user-data-dir=.deck-app-profile` — its own taskbar icon + Alt-Tab
+slot, no tabs/URL bar. `web/public/manifest.webmanifest` (+ `<link rel=manifest>`
+and `theme-color` in `index.html`) also makes Deck **installable** via Edge/Chrome
+"Install Deck" for a Start-menu entry. Requires PROD mode (12345 serves the UI);
+in dev the UI is on 12346, so the app window won't work against a dev server.
+Icons are the existing `favicon.svg` (SVG, install-capable; swap in PNGs later
+for a crisper taskbar glyph). Pin `deck.cmd` to the taskbar for one-click launch.
+Next tier if wanted: Electron shell (server in-process + system tray + global
+summon hotkey).
 
 Kill a stuck server: PowerShell `Get-NetTCPConnection -LocalPort 12345 -State Listen | %{ Stop-Process -Id $_.OwningProcess -Force }`.
 

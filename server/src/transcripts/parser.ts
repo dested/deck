@@ -55,6 +55,7 @@ export interface ParsedTranscript {
   cwd: string | null;
   lastTs: number;
   count: number;
+  model: string | null; // last assistant message model, humanized-ish
 }
 
 const MAX_DIFF_LINES = 240;
@@ -80,6 +81,7 @@ export function buildEvents(parsed: RawLine[]): ParsedTranscript {
   let title: string | null = null;
   let cwd: string | null = null;
   let lastTs = 0;
+  let model: string | null = null;
 
   // Pre-group sidechain lines by their root (walk parentUuid up to a
   // non-sidechain/absent parent). Rare in practice; degrades gracefully.
@@ -118,6 +120,8 @@ export function buildEvents(parsed: RawLine[]): ParsedTranscript {
     const ts = line.timestamp ? Date.parse(line.timestamp) : 0;
     if (ts > lastTs) lastTs = ts;
     if (!cwd && typeof line.cwd === "string") cwd = line.cwd;
+    if (line.message?.model && !/<synthetic>/.test(line.message.model))
+      model = line.message.model;
 
     // metadata one-liners
     if (line.type === "ai-title" && typeof line.aiTitle === "string") {
@@ -146,7 +150,7 @@ export function buildEvents(parsed: RawLine[]): ParsedTranscript {
     handleMainLine(line, ts, events, toolIndex);
   }
 
-  return { events, title, cwd, lastTs, count: events.length };
+  return { events, title, cwd, lastTs, count: events.length, model };
 }
 
 function handleMainLine(

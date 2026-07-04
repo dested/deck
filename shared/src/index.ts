@@ -146,6 +146,14 @@ export type SessionStatus =
 
 export type SessionSource = "owned" | "external";
 
+// Cheap roll-up of a transcript-backed session for the Agents cards (§9.4).
+export interface AgentStats {
+  messages: number; // user + assistant turns
+  tools: number; // tool calls
+  edits: number; // edit/write tool calls (files changed-ish)
+  model: string | null; // last model seen in the transcript
+}
+
 export interface Session {
   id: string; // owned: pty id; external: transcript session uuid
   kind: SessionKind;
@@ -164,6 +172,7 @@ export interface Session {
   lastActivityLine: string | null;
   unread: boolean;
   title: string | null; // ai-title if present
+  stats?: AgentStats | null; // claude sessions with a parsed transcript
 }
 
 export interface Group {

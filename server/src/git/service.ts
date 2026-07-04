@@ -362,6 +362,23 @@ export async function commit(
   return { hash: stdout.trim() };
 }
 
+// Push the current branch. If it has no upstream yet, set one on `origin`
+// (`git push -u origin <branch>`), matching what a first manual push does.
+// git writes progress to stderr on success, so key off the exit code only.
+export async function push(
+  cwd: string,
+): Promise<{ ok: boolean; output: string }> {
+  const status = await getStatus(cwd);
+  const args = ["push"];
+  if (!status.upstream && status.branch) {
+    args.push("--set-upstream", "origin", status.branch);
+  }
+  const res = await runGit(cwd, args, { allowFail: true });
+  const output = (res.stderr || res.stdout || "").trim();
+  if (res.exitCode !== 0) throw new Error(output || "push failed");
+  return { ok: true, output };
+}
+
 const LOG_FMT = "%H%x1f%h%x1f%s%x1f%an%x1f%at%x1f%D%x1e";
 
 export async function log(cwd: string, limit: number): Promise<Commit[]> {

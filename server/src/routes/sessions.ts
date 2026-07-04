@@ -47,7 +47,8 @@ export async function registerSessionRoutes(app: FastifyInstance) {
     async (req) => {
       const { id } = req.params;
       if (sessionManager.isOwned(id)) {
-        sessionManager.kill(id);
+        // Kill + fully remove (also clears zombies whose pty already died).
+        sessionManager.forceClose(id);
         return { ok: true };
       }
       updateState((s) => {

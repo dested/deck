@@ -1,4 +1,4 @@
-import type { SessionStatus, TranscriptEvent } from "@deck/shared";
+import type { AgentStats, SessionStatus, TranscriptEvent } from "@deck/shared";
 
 const SEC = 1000;
 const WORKING = 20 * SEC;
@@ -46,6 +46,25 @@ export function lastActivityLine(events: TranscriptEvent[]): string | null {
     }
   }
   return null;
+}
+
+// Roll up counts for the Agents cards. Counts top-level events; tool calls
+// inside a subagent are summarized by the subagent card, not double-counted.
+export function computeStats(
+  events: TranscriptEvent[],
+  model: string | null,
+): AgentStats {
+  let messages = 0;
+  let tools = 0;
+  let edits = 0;
+  for (const e of events) {
+    if (e.kind === "user" || e.kind === "assistant") messages++;
+    else if (e.kind === "tool") {
+      tools++;
+      if (e.isEdit) edits++;
+    }
+  }
+  return { messages, tools, edits, model };
 }
 
 // Cheap per-event signature for diffing live tails (avoid hashing huge inputs).

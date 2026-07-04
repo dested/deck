@@ -78,10 +78,12 @@ export function scanProjects(): ScannedProject[] {
 
   return candidates.map((c) => {
     const gitDir = path.win32.join(c.path, ".git");
+    // NOTE: intentionally does NOT include .git/FETCH_HEAD — a background
+    // `git fetch` (IDE/automation) is not user activity and would wrongly
+    // float a long-untouched project to the top of the list.
     const activityAt = Math.max(
       safeMtime(path.win32.join(gitDir, "index")),
       safeMtime(path.win32.join(gitDir, "HEAD")),
-      safeMtime(path.win32.join(gitDir, "FETCH_HEAD")),
       transcriptActivity.get(c.path) ?? 0,
       ptyManager.lastActivityForProject(c.path),
     );

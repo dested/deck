@@ -23,15 +23,12 @@ export async function spawnSession(
   return s;
 }
 
-// Close a session from the UI. Owned sessions are killed (they linger as a
-// readable "exited" tab). External ones can't be killed, so they're dismissed:
-// removed from the live view + any open tab, hidden until new activity.
+// Close a session from the UI. Optimistically drop it from the live store + any
+// open tab, then tell the server: owned sessions are killed + fully removed
+// (clears zombies too); external ones are dismissed (hidden until new activity).
+// Claude sessions remain re-openable from the project's Agents history.
 export function closeSession(session: Session) {
-  if (session.source === "external") {
-    useSessionsStore.getState().remove(session.id);
-    useUIStore.getState().removeSessionTabs(session.id);
-    void api.dismissSession(session.id).catch(() => {});
-  } else {
-    void api.killSession(session.id).catch(() => {});
-  }
+  useSessionsStore.getState().remove(session.id);
+  useUIStore.getState().removeSessionTabs(session.id);
+  void api.dismissSession(session.id).catch(() => {});
 }

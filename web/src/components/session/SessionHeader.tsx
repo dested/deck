@@ -75,19 +75,13 @@ export function SessionHeader({
             <RotateCw size={15} />
           </IconButton>
         )}
-        {session.source === "owned" ? (
-          <IconButton
-            label="Kill"
-            danger
-            onClick={() => void api.killSession(session.id).catch(() => {})}
-          >
-            <X size={16} />
-          </IconButton>
-        ) : (
-          <IconButton label="Dismiss" danger onClick={() => closeSession(session)}>
-            <X size={16} />
-          </IconButton>
-        )}
+        <IconButton
+          label={session.source === "owned" ? "Close" : "Dismiss"}
+          danger
+          onClick={() => closeSession(session)}
+        >
+          <X size={16} />
+        </IconButton>
       </div>
     </div>
   );

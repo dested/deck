@@ -94,6 +94,8 @@ export const api = {
       message,
       amend,
     }),
+  gitPush: (id: string) =>
+    post<{ ok: boolean; output: string }>(`/api/projects/${enc(id)}/git/push`),
   gitLog: (id: string, limit = 50) =>
     get<Commit[]>(`/api/projects/${enc(id)}/git/log?limit=${limit}`),
   gitShow: (id: string, hash: string) =>

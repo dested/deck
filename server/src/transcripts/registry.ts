@@ -2,7 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Session, TranscriptEvent } from "@deck/shared";
 import { parseTranscript, type ParsedTranscript } from "./parser.js";
-import { computeStatus, lastActivityLine, eventSignature } from "./status.js";
+import {
+  computeStatus,
+  lastActivityLine,
+  eventSignature,
+  computeStats,
+} from "./status.js";
+import type { AgentStats } from "@deck/shared";
 import {
   listTranscriptDirs,
   buildEncodedIndex,
@@ -59,6 +65,7 @@ class TranscriptRegistry {
     status: Session["status"];
     lastActivityLine: string | null;
     title: string | null;
+    stats: AgentStats;
   } | null {
     const meta = this.index.get(transcriptId);
     const parsed = this.getParsed(transcriptId);
@@ -68,6 +75,7 @@ class TranscriptRegistry {
       status: computeStatus(mtime, parsed.events),
       lastActivityLine: lastActivityLine(parsed.events),
       title: parsed.title,
+      stats: computeStats(parsed.events, parsed.model),
     };
   }
 
@@ -179,6 +187,7 @@ class TranscriptRegistry {
       lastActivityLine: lastActivityLine(parsed.events),
       unread: false,
       title: parsed.title,
+      stats: computeStats(parsed.events, parsed.model),
     };
   }
 
@@ -310,10 +319,27 @@ class TranscriptRegistry {
       }
     }
 
-    // Publish updated session summary for live cards/sidebar.
+    // Publish updated session summary for live cards/sidebar — UNLESS this
+    // transcript is backed by an owned pty. The session manager already
+    // publishes owned sessions; re-publishing here as an `external` twin (a
+    // DIFFERENT session id) produced a duplicate card. If we ever surfaced it
+    // as external before linkage completed, retract that stray card now.
     const m = this.index.get(sessionId);
     if (m) {
+      if (this.ownedChecker().has(sessionId)) {
+        if (this.lastKey.delete(sessionId)) {
+          eventHub.publish([topics.sessions], {
+            t: "sessions.removed",
+            id: sessionId,
+          });
+        }
+        return;
+      }
       const session = this.toSession(m, parsed);
+      this.lastKey.set(
+        sessionId,
+        `${session.status}|${session.name}|${session.groupId}|${session.activityAt}`,
+      );
       eventHub.publish([topics.sessions], {
         t: "sessions.updated",
         payload: session,
