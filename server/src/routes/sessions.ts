@@ -39,6 +39,25 @@ export async function registerSessionRoutes(app: FastifyInstance) {
     },
   );
 
+  // Remove a session from the live view. Owned sessions are killed; external
+  // (transcript-only) sessions can't be killed, so they're dismissed — hidden
+  // until their transcript sees new activity.
+  app.post<{ Params: { id: string } }>(
+    "/sessions/:id/dismiss",
+    async (req) => {
+      const { id } = req.params;
+      if (sessionManager.isOwned(id)) {
+        sessionManager.kill(id);
+        return { ok: true };
+      }
+      updateState((s) => {
+        s.dismissedSessions[id] = Date.now();
+      });
+      sessionManager.publishRemoved(id);
+      return { ok: true };
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: { name: string } }>(
     "/sessions/:id/rename",
     async (req) => {

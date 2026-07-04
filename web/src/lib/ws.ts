@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { WsServerMsg, TranscriptEvent } from "@deck/shared";
 import { useProjectsStore } from "../stores/projectsStore";
 import { useSessionsStore } from "../stores/sessionsStore";
+import { useUIStore } from "../stores/uiStore";
 
 type Listener = (msg: WsServerMsg) => void;
 
@@ -95,6 +96,7 @@ class EventsClient {
         break;
       case "sessions.removed":
         useSessionsStore.getState().remove(msg.id);
+        useUIStore.getState().removeSessionTabs(msg.id);
         break;
       case "git.updated":
         this.queryClient?.invalidateQueries({

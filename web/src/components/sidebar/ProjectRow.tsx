@@ -1,5 +1,5 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Pin, PinOff, EyeOff, Bot, SquareTerminal, FolderOpen, Copy, Zap } from "lucide-react";
+import { Pin, PinOff, EyeOff, Bot, SquareTerminal, FolderOpen, Copy, Zap, Code2 } from "lucide-react";
 import type { ProjectSummary } from "@deck/shared";
 import { cn } from "../../lib/cn";
 import { api } from "../../lib/api";
@@ -101,6 +101,12 @@ export function ProjectRow({
             onSelect={() => api.revealProject(project.id)}
           >
             <FolderOpen size={14} /> Open in Explorer
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className={menuItem}
+            onSelect={() => api.openInWebstorm(project.id)}
+          >
+            <Code2 size={14} /> Open in WebStorm
           </ContextMenu.Item>
           <ContextMenu.Item
             className={menuItem}

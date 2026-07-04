@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { X, RotateCw } from "lucide-react";
 import type { Session } from "@deck/shared";
 import { api } from "../../lib/api";
+import { closeSession } from "../../lib/sessions";
 import {
   menuContent,
   menuContentStyle,
@@ -10,7 +11,8 @@ import {
   menuItemDanger,
 } from "../ui/menuStyles";
 
-// Right-click menu for session rows/cards: restart, kill.
+// Right-click menu for session rows/cards: restart, and close (kill owned /
+// dismiss external — every session can be gotten rid of).
 export function SessionContextMenu({
   session,
   children,
@@ -19,8 +21,7 @@ export function SessionContextMenu({
   children: ReactNode;
 }) {
   const canRestart = session.source === "owned" && session.kind === "claude";
-  const canKill = session.source === "owned";
-  if (!canRestart && !canKill) return <>{children}</>;
+  const isExternal = session.source === "external";
 
   return (
     <ContextMenu.Root>
@@ -35,14 +36,12 @@ export function SessionContextMenu({
               <RotateCw size={14} /> Restart
             </ContextMenu.Item>
           )}
-          {canKill && (
-            <ContextMenu.Item
-              className={menuItemDanger}
-              onSelect={() => void api.killSession(session.id).catch(() => {})}
-            >
-              <X size={14} /> Kill
-            </ContextMenu.Item>
-          )}
+          <ContextMenu.Item
+            className={menuItemDanger}
+            onSelect={() => closeSession(session)}
+          >
+            <X size={14} /> {isExternal ? "Dismiss" : "Kill"}
+          </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

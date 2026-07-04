@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import type { ProjectDetail } from "@deck/shared";
 import { projectRegistry } from "../projects/registry.js";
 import { updateState } from "../state.js";
+import { config } from "../config.js";
 
 export async function registerProjectRoutes(app: FastifyInstance) {
   app.get("/projects", async () => projectRegistry.getAll());
@@ -57,6 +58,23 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       if (!p) return reply.code(404).send({ error: "not found" });
       execFile("explorer.exe", [p.path], () => {
         /* explorer returns non-zero even on success; ignore */
+      });
+      return { ok: true };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/webstorm",
+    async (req, reply) => {
+      const p = projectRegistry.getById(req.params.id);
+      if (!p) return reply.code(404).send({ error: "not found" });
+      // A configured absolute exe is launched directly; otherwise resolve the
+      // JetBrains Toolbox `webstorm` shim from PATH via cmd.
+      const [cmd, args] = config.webstormBin
+        ? [config.webstormBin, [p.path]]
+        : ["cmd", ["/c", "webstorm", p.path]];
+      execFile(cmd, args, (err) => {
+        if (err) console.warn("[webstorm] launch failed:", err.message);
       });
       return { ok: true };
     },

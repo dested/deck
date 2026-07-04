@@ -10,6 +10,7 @@ import {
   Files,
   X,
   PanelLeft,
+  Code2,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -135,6 +136,13 @@ export function ProjectShell({ projectId }: { projectId: string }) {
             onClick={() => api.revealProject(projectId)}
           >
             <FolderOpen size={14} /> Explorer
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => api.openInWebstorm(projectId)}
+          >
+            <Code2 size={14} /> WebStorm
           </Button>
           <Button
             size="sm"

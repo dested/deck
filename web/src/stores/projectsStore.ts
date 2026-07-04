@@ -26,28 +26,23 @@ export const useProjectsStore = create<ProjectsState>((set) => ({
     }),
 }));
 
-// Sorted view: pinned first, then by when YOU last opened it in Deck (recency of
-// your own interaction — filesystem activity alone put untouched repos on top),
-// falling back to filesystem activity for never-opened projects. Hidden excluded
-// unless asked.
+// Sorted view: pinned first, then by filesystem activity, then name as a stable
+// tie-break. Deliberately does NOT reorder on interaction — clicking a project
+// must not make the list jump under the cursor. Hidden excluded unless asked.
 export function selectSortedProjects(
   byId: Record<string, ProjectSummary>,
   opts: {
     includeHidden?: boolean;
     query?: string;
-    lastOpenedAt?: Record<string, number>;
   } = {},
 ): ProjectSummary[] {
   const q = opts.query?.trim().toLowerCase();
-  const lo = opts.lastOpenedAt ?? {};
   let list = Object.values(byId);
   if (!opts.includeHidden) list = list.filter((p) => !p.hidden);
   if (q) list = list.filter((p) => p.name.toLowerCase().includes(q));
   return list.sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    const la = lo[a.id] ?? 0;
-    const lb = lo[b.id] ?? 0;
-    if (la !== lb) return lb - la;
-    return b.activityAt - a.activityAt;
+    if (a.activityAt !== b.activityAt) return b.activityAt - a.activityAt;
+    return a.name.localeCompare(b.name);
   });
 }

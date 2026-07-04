@@ -8,6 +8,41 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
 ---
 
+## Recent UX fixes (2026-07-04, post-M6)
+
+- **Owned claude view is terminal-first** (`components/session/ClaudeSessionView.tsx`).
+  The xterm terminal is the session and is always full-width; the Agent transcript
+  (Feed + Composer) is HIDDEN by default and slides in on the LEFT when enabled.
+  Toggle: header button ("Show/Hide transcript") **or Ctrl+`** (repurposed — it
+  used to toggle the terminal). Terminal stays mounted across toggles so its
+  socket never drops.
+- **Sidebar no longer auto-collapses.** Removed `useImmersiveSidebar` from
+  `App.tsx`; opening a session tab keeps the sidebar. Ctrl+B still toggles.
+- **Stable project ordering** (`stores/projectsStore.ts`). Sort is pinned →
+  filesystem `activityAt` → name. Clicking a project no longer bumps it (dropped
+  the `lastOpenedAt` tiebreak from the sort; the value still drives the row's
+  hover "last opened" hint). Selector no longer takes `lastOpenedAt`.
+- **Every session can be closed.** External (transcript-only) sessions can't be
+  killed, so they're *dismissed*: `POST /sessions/:id/dismiss` records
+  `state.dismissedSessions[id]=now`; the registry hides it until its transcript
+  mtime moves past that time. `tickExternal` also emits `sessions.removed` when an
+  external ages to `stale`, so stale agents clear from the live store instead of
+  lingering. Client helper `closeSession(session)` in `lib/sessions.ts` (kill
+  owned / dismiss external, optimistic store+tab removal). `sessions.removed` now
+  also closes any open tab (`uiStore.removeSessionTabs`). Wired into SessionCard,
+  SessionContextMenu, SessionHeader.
+- **Open in WebStorm** button next to Explorer (project header + ProjectRow
+  context menu). `POST /projects/:id/webstorm` → `config.webstormBin` if set,
+  else `cmd /c webstorm <path>` (resolves the JetBrains Toolbox `webstorm.cmd`
+  shim on PATH). Override via `deck.config.json` `webstormBin`.
+
+**Post-M6 map drift:** the file map below still lists the pre-refactor shell
+(`MainArea`/`TabBar`/`GridView`/`ProjectView`); those were replaced by
+`views/ProjectShell.tsx` (per-project tab strip: views + session tabs). Not yet
+fully reconciled here.
+
+---
+
 ## Deviations from SPEC.md (record every forced one here)
 
 1. **Git-heartbeat watcher tier (addition to §4.3).** SPEC's repo tier watches a

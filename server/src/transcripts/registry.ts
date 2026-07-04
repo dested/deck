@@ -47,6 +47,13 @@ class TranscriptRegistry {
     this.ownedChecker = fn;
   }
 
+  // A dismissed external session stays hidden until its transcript is touched
+  // again (mtime moves past the dismiss time) — then it legitimately reappears.
+  private isDismissed(sessionId: string, mtimeMs: number): boolean {
+    const at = getState().dismissedSessions[sessionId];
+    return at != null && mtimeMs <= at;
+  }
+
   // Status/activity for an owned claude session's linked transcript.
   describe(transcriptId: string): {
     status: Session["status"];
@@ -183,6 +190,7 @@ class TranscriptRegistry {
     for (const meta of this.index.values()) {
       if (now - meta.mtimeMs > RECENT_MS) continue;
       if (owned.has(meta.sessionId)) continue;
+      if (this.isDismissed(meta.sessionId, meta.mtimeMs)) continue;
       const parsed = this.getParsed(meta.sessionId);
       if (!parsed) continue;
       out.push(this.toSession(meta, parsed));
@@ -198,6 +206,7 @@ class TranscriptRegistry {
     const history: Session[] = [];
     for (const meta of this.index.values()) {
       if (owned.has(meta.sessionId)) continue;
+      if (this.isDismissed(meta.sessionId, meta.mtimeMs)) continue;
       const proj = this.projectFor(meta);
       if (proj.id !== projectId) continue;
       const parsed = this.getParsed(meta.sessionId);
@@ -237,6 +246,21 @@ class TranscriptRegistry {
       const parsed = cached?.parsed ?? this.getParsed(meta.sessionId);
       if (!parsed) continue;
       const session = this.toSession(meta, parsed);
+      // Once an external session goes stale (or is dismissed), drop it from the
+      // live clients entirely rather than leaving it stuck in the store — it's
+      // still available under the project's Agents history, freshly fetched.
+      if (
+        session.status === "stale" ||
+        this.isDismissed(meta.sessionId, meta.mtimeMs)
+      ) {
+        if (this.lastKey.delete(meta.sessionId)) {
+          eventHub.publish([topics.sessions], {
+            t: "sessions.removed",
+            id: meta.sessionId,
+          });
+        }
+        continue;
+      }
       const key = `${session.status}|${session.name}|${session.groupId}|${session.activityAt}`;
       if (this.lastKey.get(meta.sessionId) === key) continue;
       this.lastKey.set(meta.sessionId, key);

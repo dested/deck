@@ -68,6 +68,7 @@ interface UIState {
   openSession: (sessionId: string, projectId?: string) => void;
   closeTab: (tabId: string, projectId?: string) => void;
   closeActiveTab: () => void;
+  removeSessionTabs: (sessionId: string) => void;
   activateTab: (tabId: string) => void;
   nextTab: (dir: 1 | -1) => void;
   activateIndex: (i: number) => void;
@@ -179,6 +180,31 @@ export const useUIStore = create<UIState>()(
         const state = get().projectTabs[pid];
         if (state) get().closeTab(state.activeTabId, pid);
       },
+
+      // Drop any session tab for this session across ALL projects (used when a
+      // session is killed/dismissed/removed so no dangling tab is left behind).
+      removeSessionTabs: (sessionId) =>
+        set((st) => {
+          const id = sessionTabId(sessionId);
+          const nextTabs: Record<string, ProjectTabState> = {};
+          let changed = false;
+          for (const [pid, state] of Object.entries(st.projectTabs)) {
+            if (!state.tabs.some((t) => t.id === id)) {
+              nextTabs[pid] = state;
+              continue;
+            }
+            changed = true;
+            const idx = state.tabs.findIndex((t) => t.id === id);
+            const tabs = state.tabs.filter((t) => t.id !== id);
+            let activeTabId = state.activeTabId;
+            if (activeTabId === id) {
+              const fallback = tabs[Math.min(idx, tabs.length - 1)] ?? tabs[0]!;
+              activeTabId = fallback.id;
+            }
+            nextTabs[pid] = { tabs, activeTabId };
+          }
+          return changed ? { projectTabs: nextTabs } : st;
+        }),
 
       activateTab: (tabId) =>
         set((st) => {

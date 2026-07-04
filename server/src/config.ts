@@ -9,6 +9,7 @@ interface RawConfig {
   claudeDir?: string;
   defaultShell?: string;
   claudeBin?: string;
+  webstormBin?: string;
 }
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
@@ -42,6 +43,8 @@ export const config = {
   deckStateFile: path.join(home, ".deck", "state.json"),
   defaultShell: raw.defaultShell ?? "pwsh.exe",
   claudeBinOverride: raw.claudeBin ?? null,
+  // JetBrains Toolbox puts a `webstorm` shell script on PATH; overridable.
+  webstormBin: raw.webstormBin ?? null,
   isDev: process.env.DECK_DEV === "1",
   isProd: process.env.NODE_ENV === "production",
 };

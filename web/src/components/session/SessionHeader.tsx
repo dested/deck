@@ -5,6 +5,7 @@ import { StatusDot } from "../ui/StatusDot";
 import { IconButton } from "../ui/IconButton";
 import { useUIStore } from "../../stores/uiStore";
 import { api } from "../../lib/api";
+import { closeSession } from "../../lib/sessions";
 
 // M2: dot, editable name, project link, kill. Restart/adopt/group added in M4.
 export function SessionHeader({
@@ -74,12 +75,16 @@ export function SessionHeader({
             <RotateCw size={15} />
           </IconButton>
         )}
-        {session.source === "owned" && (
+        {session.source === "owned" ? (
           <IconButton
             label="Kill"
             danger
             onClick={() => void api.killSession(session.id).catch(() => {})}
           >
+            <X size={16} />
+          </IconButton>
+        ) : (
+          <IconButton label="Dismiss" danger onClick={() => closeSession(session)}>
             <X size={16} />
           </IconButton>
         )}

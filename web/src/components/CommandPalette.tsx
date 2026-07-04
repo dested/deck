@@ -22,7 +22,6 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen);
   const projects = useProjectsStore((s) => s.byId);
   const sessions = useSessionsStore((s) => s.byId);
-  const lastOpenedAt = useUIStore((s) => s.lastOpenedAt);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -52,7 +51,7 @@ export function CommandPalette() {
           run: () => void api.killSession(s.id).catch(() => {}),
         });
     }
-    for (const p of selectSortedProjects(projects, { lastOpenedAt })) {
+    for (const p of selectSortedProjects(projects)) {
       cmds.push({
         id: "proj:" + p.id,
         label: `Open ${p.name}`,
@@ -74,7 +73,7 @@ export function CommandPalette() {
       });
     }
     return cmds;
-  }, [projects, sessions, lastOpenedAt]);
+  }, [projects, sessions]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

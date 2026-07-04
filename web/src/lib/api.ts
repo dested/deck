@@ -142,4 +142,7 @@ export const api = {
   hideProject: (id: string, hidden: boolean) =>
     post(`/api/projects/${enc(id)}/hide`, { hidden }),
   revealProject: (id: string) => post(`/api/projects/${enc(id)}/reveal`),
+  openInWebstorm: (id: string) => post(`/api/projects/${enc(id)}/webstorm`),
+
+  dismissSession: (id: string) => post(`/api/sessions/${enc(id)}/dismiss`),
 };

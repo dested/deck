@@ -4,7 +4,7 @@ import type { Session } from "@deck/shared";
 import { StatusDot } from "../ui/StatusDot";
 import { useUIStore } from "../../stores/uiStore";
 import { relTime } from "../../lib/format";
-import { api } from "../../lib/api";
+import { closeSession } from "../../lib/sessions";
 import { cn } from "../../lib/cn";
 
 export function SessionCard({ session }: { session: Session }) {
@@ -35,10 +35,10 @@ export function SessionCard({ session }: { session: Session }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            void api.killSession(session.id).catch(() => {});
+            closeSession(session);
           }}
           className="ml-auto flex h-5 w-5 items-center justify-center rounded-[4px] text-t3 opacity-0 hover:bg-hair hover:text-[color:var(--err)] group-hover:opacity-100"
-          aria-label="Kill session"
+          aria-label={session.source === "external" ? "Dismiss session" : "Kill session"}
         >
           <X size={13} />
         </button>

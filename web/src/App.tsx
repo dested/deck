@@ -28,7 +28,6 @@ export function App() {
   useGlobalKeys();
   useAttentionBadge();
   useNotifications();
-  useImmersiveSidebar();
 
   return (
     <TooltipProvider>
@@ -50,20 +49,4 @@ export function App() {
       <SettingsDialog />
     </TooltipProvider>
   );
-}
-
-// Sessions are immersive: when a session tab is active the sidebar auto-hides so
-// the terminal/feed gets the full width. Switching to a view tab or Home brings
-// it back. Ctrl+B (or the tab-strip toggle) still reveals it, and that override
-// holds until you switch tabs (this only re-runs when the active tab changes).
-function useImmersiveSidebar() {
-  const activeKey = useUIStore((s) => {
-    const pid = s.activeProjectId;
-    if (!pid) return "home";
-    const state = s.projectTabs[pid];
-    return state?.activeTabId ?? "home";
-  });
-  useEffect(() => {
-    useUIStore.setState({ sidebarCollapsed: activeKey.startsWith("session:") });
-  }, [activeKey]);
 }

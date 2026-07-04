@@ -25,8 +25,8 @@ export function Sidebar() {
   const stats = useMemo(() => selectProjectStats(sessions), [sessions]);
 
   const visible = useMemo(
-    () => selectSortedProjects(byId, { query: search, lastOpenedAt }),
-    [byId, search, lastOpenedAt],
+    () => selectSortedProjects(byId, { query: search }),
+    [byId, search],
   );
   const hiddenCount = useMemo(
     () => Object.values(byId).filter((p) => p.hidden).length,
@@ -38,10 +38,9 @@ export function Sidebar() {
         ? selectSortedProjects(byId, {
             query: search,
             includeHidden: true,
-            lastOpenedAt,
           }).filter((p) => p.hidden)
         : [],
-    [byId, search, showHidden, lastOpenedAt],
+    [byId, search, showHidden],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
