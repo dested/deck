@@ -1,14 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  Search,
-  FolderGit2,
-  Bot,
-  SquareTerminal,
-  LayoutGrid,
-  X,
-  Settings,
-} from "lucide-react";
+import { Search, FolderGit2, Bot, SquareTerminal, X, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
@@ -30,7 +22,7 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen);
   const projects = useProjectsStore((s) => s.byId);
   const sessions = useSessionsStore((s) => s.byId);
-  const groups = useSessionsStore((s) => s.groups);
+  const lastOpenedAt = useUIStore((s) => s.lastOpenedAt);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -44,14 +36,6 @@ export function CommandPalette() {
       icon: <Settings size={15} />,
       run: () => ui.setSettingsOpen(true),
     });
-    for (const g of groups) {
-      cmds.push({
-        id: "grid:" + g.id,
-        label: `Open ${g.name} grid`,
-        icon: <LayoutGrid size={15} />,
-        run: () => ui.openGrid(g.id),
-      });
-    }
     for (const s of selectSessions(sessions).filter(isLive)) {
       cmds.push({
         id: "sess:" + s.id,
@@ -68,7 +52,7 @@ export function CommandPalette() {
           run: () => void api.killSession(s.id).catch(() => {}),
         });
     }
-    for (const p of selectSortedProjects(projects)) {
+    for (const p of selectSortedProjects(projects, { lastOpenedAt })) {
       cmds.push({
         id: "proj:" + p.id,
         label: `Open ${p.name}`,
@@ -90,7 +74,7 @@ export function CommandPalette() {
       });
     }
     return cmds;
-  }, [projects, sessions, groups]);
+  }, [projects, sessions, lastOpenedAt]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -10,7 +10,7 @@ export function useNotifications() {
 
   useEffect(() => {
     if (!useUIStore.getState().notificationsEnabled) return;
-    const active = useUIStore.getState().activeTabId;
+    const activeSession = useUIStore.getState().activeSessionId();
     for (const s of Object.values(byId)) {
       const before = prev.current[s.id];
       if (
@@ -18,7 +18,7 @@ export function useNotifications() {
         before !== "attention" &&
         s.status === "attention"
       ) {
-        const isActive = active === `session:${s.id}`;
+        const isActive = activeSession === s.id;
         if (document.hidden || !isActive) fire(s.id, s.name, s.lastActivityLine);
       }
       prev.current[s.id] = s.status;

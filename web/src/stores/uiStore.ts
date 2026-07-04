@@ -1,24 +1,47 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useSessionsStore } from "./sessionsStore";
 
-export type ProjectSubtab = "agents" | "git" | "files" | "terminals";
+// A project's functional views live in the SAME per-project tab strip as the
+// agent/terminal sessions you open. Views are permanent (non-closable); session
+// tabs are opened and closed freely.
+export type ProjectViewKind = "agents" | "git" | "files";
 
-export type Tab =
-  | { id: string; kind: "home" }
-  | {
-      id: string;
-      kind: "project";
-      projectId: string;
-      subtab: ProjectSubtab;
-    }
-  | { id: string; kind: "session"; sessionId: string }
-  | { id: string; kind: "grid"; groupId: string };
+export type ProjectTab =
+  | { id: string; kind: "view"; view: ProjectViewKind }
+  | { id: string; kind: "session"; sessionId: string };
 
-const HOME_TAB: Tab = { id: "home", kind: "home" };
+interface ProjectTabState {
+  tabs: ProjectTab[];
+  activeTabId: string;
+}
+
+const DEFAULT_VIEWS: ProjectViewKind[] = ["agents", "git", "files"];
+
+function viewTabId(view: ProjectViewKind) {
+  return `view:${view}`;
+}
+function sessionTabId(sessionId: string) {
+  return `session:${sessionId}`;
+}
+
+function initialTabState(): ProjectTabState {
+  const tabs: ProjectTab[] = DEFAULT_VIEWS.map((v) => ({
+    id: viewTabId(v),
+    kind: "view",
+    view: v,
+  }));
+  return { tabs, activeTabId: tabs[0]!.id };
+}
 
 interface UIState {
-  tabs: Tab[];
-  activeTabId: string;
+  // null = Home (no project selected). Tabs are scoped per-project: switching
+  // the active project swaps the whole tab strip.
+  activeProjectId: string | null;
+  projectTabs: Record<string, ProjectTabState>;
+  // When YOU last opened a project in Deck — drives sidebar ordering.
+  lastOpenedAt: Record<string, number>;
+
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   search: string;
@@ -26,8 +49,8 @@ interface UIState {
   notificationsEnabled: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
-  // Path the Files tab should open next (set by "Open in Files" from git), keyed
-  // by project id so switching projects doesn't cross wires.
+  // Path the Files view should open next (set by "Open in Files" from git),
+  // keyed by project id so switching projects doesn't cross wires.
   pendingFile: Record<string, string>;
 
   setSearch: (s: string) => void;
@@ -40,35 +63,24 @@ interface UIState {
   requestFile: (projectId: string, path: string) => void;
   consumeFile: (projectId: string) => string | null;
 
-  openTab: (tab: Tab, opts?: { activate?: boolean }) => void;
-  closeTab: (id: string) => void;
-  activateTab: (id: string) => void;
+  goHome: () => void;
+  openProject: (projectId: string, view?: ProjectViewKind) => void;
+  openSession: (sessionId: string, projectId?: string) => void;
+  closeTab: (tabId: string, projectId?: string) => void;
+  closeActiveTab: () => void;
+  activateTab: (tabId: string) => void;
   nextTab: (dir: 1 | -1) => void;
   activateIndex: (i: number) => void;
-  setProjectSubtab: (tabId: string, subtab: ProjectSubtab) => void;
-  openProject: (projectId: string, subtab?: ProjectSubtab) => void;
-  openSession: (sessionId: string) => void;
-  openGrid: (groupId: string) => void;
-}
-
-function tabKey(tab: Tab): string {
-  switch (tab.kind) {
-    case "home":
-      return "home";
-    case "project":
-      return `project:${tab.projectId}`;
-    case "session":
-      return `session:${tab.sessionId}`;
-    case "grid":
-      return `grid:${tab.groupId}`;
-  }
+  // The session id of the active project's active tab, if it's a session tab.
+  activeSessionId: () => string | null;
 }
 
 export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
-      tabs: [HOME_TAB],
-      activeTabId: "home",
+      activeProjectId: null,
+      projectTabs: {},
+      lastOpenedAt: {},
       sidebarCollapsed: false,
       sidebarWidth: 264,
       search: "",
@@ -92,90 +104,159 @@ export const useUIStore = create<UIState>()(
         set((st) => ({ pendingFile: { ...st.pendingFile, [projectId]: path } })),
       consumeFile: (projectId) => {
         const p = get().pendingFile[projectId] ?? null;
-        if (p) set((st) => {
-          const next = { ...st.pendingFile };
-          delete next[projectId];
-          return { pendingFile: next };
-        });
+        if (p)
+          set((st) => {
+            const next = { ...st.pendingFile };
+            delete next[projectId];
+            return { pendingFile: next };
+          });
         return p;
       },
 
-      openTab: (tab, opts = {}) => {
-        const activate = opts.activate ?? true;
-        const key = tabKey(tab);
-        const existing = get().tabs.find((t) => tabKey(t) === key);
-        if (existing) {
-          if (activate) set({ activeTabId: existing.id });
-          return;
-        }
-        set((st) => ({
-          tabs: [...st.tabs, tab],
-          activeTabId: activate ? tab.id : st.activeTabId,
-        }));
-      },
+      goHome: () => set({ activeProjectId: null }),
 
-      closeTab: (id) => {
-        if (id === "home") return; // home is permanent
+      openProject: (projectId, view) =>
         set((st) => {
-          const idx = st.tabs.findIndex((t) => t.id === id);
-          if (idx < 0) return st;
-          const tabs = st.tabs.filter((t) => t.id !== id);
-          let activeTabId = st.activeTabId;
-          if (activeTabId === id) {
-            const fallback = tabs[Math.min(idx, tabs.length - 1)] ?? HOME_TAB;
-            activeTabId = fallback.id;
-          }
-          return { tabs, activeTabId };
+          const existing = st.projectTabs[projectId] ?? initialTabState();
+          const activeTabId = view ? viewTabId(view) : existing.activeTabId;
+          return {
+            activeProjectId: projectId,
+            projectTabs: {
+              ...st.projectTabs,
+              [projectId]: { ...existing, activeTabId },
+            },
+            lastOpenedAt: { ...st.lastOpenedAt, [projectId]: Date.now() },
+          };
+        }),
+
+      openSession: (sessionId, projectId) => {
+        const pid =
+          projectId ??
+          useSessionsStore.getState().byId[sessionId]?.projectId ??
+          null;
+        if (!pid) return;
+        set((st) => {
+          const existing = st.projectTabs[pid] ?? initialTabState();
+          const id = sessionTabId(sessionId);
+          const tabs = existing.tabs.some((t) => t.id === id)
+            ? existing.tabs
+            : [...existing.tabs, { id, kind: "session" as const, sessionId }];
+          return {
+            activeProjectId: pid,
+            projectTabs: {
+              ...st.projectTabs,
+              [pid]: { tabs, activeTabId: id },
+            },
+            lastOpenedAt: { ...st.lastOpenedAt, [pid]: Date.now() },
+          };
         });
       },
 
-      activateTab: (id) => set({ activeTabId: id }),
+      closeTab: (tabId, projectId) => {
+        const pid = projectId ?? get().activeProjectId;
+        if (!pid) return;
+        set((st) => {
+          const state = st.projectTabs[pid];
+          if (!state) return st;
+          const target = state.tabs.find((t) => t.id === tabId);
+          if (!target || target.kind === "view") return st; // views are permanent
+          const idx = state.tabs.findIndex((t) => t.id === tabId);
+          const tabs = state.tabs.filter((t) => t.id !== tabId);
+          let activeTabId = state.activeTabId;
+          if (activeTabId === tabId) {
+            const fallback = tabs[Math.min(idx, tabs.length - 1)] ?? tabs[0]!;
+            activeTabId = fallback.id;
+          }
+          return {
+            projectTabs: { ...st.projectTabs, [pid]: { tabs, activeTabId } },
+          };
+        });
+      },
+
+      closeActiveTab: () => {
+        const pid = get().activeProjectId;
+        if (!pid) return;
+        const state = get().projectTabs[pid];
+        if (state) get().closeTab(state.activeTabId, pid);
+      },
+
+      activateTab: (tabId) =>
+        set((st) => {
+          const pid = st.activeProjectId;
+          if (!pid) return st;
+          const state = st.projectTabs[pid];
+          if (!state) return st;
+          return {
+            projectTabs: {
+              ...st.projectTabs,
+              [pid]: { ...state, activeTabId: tabId },
+            },
+          };
+        }),
 
       nextTab: (dir) =>
         set((st) => {
-          const idx = st.tabs.findIndex((t) => t.id === st.activeTabId);
+          const pid = st.activeProjectId;
+          if (!pid) return st;
+          const state = st.projectTabs[pid];
+          if (!state) return st;
+          const idx = state.tabs.findIndex((t) => t.id === state.activeTabId);
           if (idx < 0) return st;
-          const n = st.tabs.length;
-          const nextIdx = (idx + dir + n) % n;
-          return { activeTabId: st.tabs[nextIdx]!.id };
+          const n = state.tabs.length;
+          const nextId = state.tabs[(idx + dir + n) % n]!.id;
+          return {
+            projectTabs: {
+              ...st.projectTabs,
+              [pid]: { ...state, activeTabId: nextId },
+            },
+          };
         }),
 
       activateIndex: (i) =>
         set((st) => {
-          const tab = st.tabs[i];
-          return tab ? { activeTabId: tab.id } : st;
+          const pid = st.activeProjectId;
+          if (!pid) return st;
+          const state = st.projectTabs[pid];
+          const tab = state?.tabs[i];
+          if (!state || !tab) return st;
+          return {
+            projectTabs: {
+              ...st.projectTabs,
+              [pid]: { ...state, activeTabId: tab.id },
+            },
+          };
         }),
 
-      setProjectSubtab: (tabId, subtab) =>
-        set((st) => ({
-          tabs: st.tabs.map((t) =>
-            t.id === tabId && t.kind === "project" ? { ...t, subtab } : t,
-          ),
-        })),
-
-      openProject: (projectId, subtab = "agents") =>
-        get().openTab({
-          id: `project:${projectId}`,
-          kind: "project",
-          projectId,
-          subtab,
-        }),
-
-      openSession: (sessionId) =>
-        get().openTab({
-          id: `session:${sessionId}`,
-          kind: "session",
-          sessionId,
-        }),
-
-      openGrid: (groupId) =>
-        get().openTab({ id: `grid:${groupId}`, kind: "grid", groupId }),
+      activeSessionId: () => {
+        const pid = get().activeProjectId;
+        if (!pid) return null;
+        const state = get().projectTabs[pid];
+        if (!state) return null;
+        const t = state.tabs.find((x) => x.id === state.activeTabId);
+        return t && t.kind === "session" ? t.sessionId : null;
+      },
     }),
     {
       name: "deck-ui",
+      version: 2,
+      migrate: (persisted: unknown) => {
+        // v1 kept a single global `tabs`/`activeTabId` — drop them; the new
+        // per-project model starts fresh (sidebar/prefs are preserved).
+        if (persisted && typeof persisted === "object") {
+          const { tabs, activeTabId, ...rest } = persisted as Record<
+            string,
+            unknown
+          >;
+          void tabs;
+          void activeTabId;
+          return rest;
+        }
+        return persisted;
+      },
       partialize: (st) => ({
-        tabs: st.tabs,
-        activeTabId: st.activeTabId,
+        activeProjectId: st.activeProjectId,
+        projectTabs: st.projectTabs,
+        lastOpenedAt: st.lastOpenedAt,
         sidebarCollapsed: st.sidebarCollapsed,
         sidebarWidth: st.sidebarWidth,
         terminalFontSize: st.terminalFontSize,

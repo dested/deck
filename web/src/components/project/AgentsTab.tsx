@@ -1,17 +1,23 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, History } from "lucide-react";
+import { Bot, SquareTerminal, History } from "lucide-react";
 import type { Session } from "@deck/shared";
 import { api } from "../../lib/api";
-import { useSessionsStore } from "../../stores/sessionsStore";
+import {
+  useSessionsStore,
+  selectSessions,
+  isLive,
+} from "../../stores/sessionsStore";
 import { useUIStore } from "../../stores/uiStore";
 import { StatusDot } from "../ui/StatusDot";
 import { EmptyState } from "../ui/EmptyState";
 import { relTime, dayBucket } from "../../lib/format";
 
-// §9.4 Agents tab: live sessions for this project + history of past transcripts.
+// §9.4 Agents tab: live sessions for this project (claude agents + terminals,
+// so a closed session tab is always re-openable here) + history of transcripts.
 export function AgentsTab({ projectId }: { projectId: string }) {
   const upsert = useSessionsStore((s) => s.upsert);
+  const storeById = useSessionsStore((s) => s.byId);
   const { data, isLoading } = useQuery({
     queryKey: ["agent-sessions", projectId],
     queryFn: () => api.projectAgentSessions(projectId),
@@ -28,7 +34,14 @@ export function AgentsTab({ projectId }: { projectId: string }) {
     return <div className="p-5 text-[13px] text-t3">Loading sessions…</div>;
   }
 
-  const live = data?.live ?? [];
+  // Merge API live sessions with any live owned session in the store for this
+  // project (terminals live only in the store), deduped by id.
+  const liveById: Record<string, Session> = {};
+  for (const s of data?.live ?? []) liveById[s.id] = s;
+  for (const s of Object.values(storeById)) {
+    if (s.projectId === projectId && isLive(s)) liveById[s.id] = s;
+  }
+  const live = selectSessions(liveById);
   const history = data?.history ?? [];
 
   if (live.length === 0 && history.length === 0) {
@@ -67,12 +80,14 @@ export function AgentsTab({ projectId }: { projectId: string }) {
 
 function LiveRow({ session }: { session: Session }) {
   const openSession = useUIStore((s) => s.openSession);
+  const Icon = session.kind === "claude" ? Bot : SquareTerminal;
   return (
     <button
       onClick={() => openSession(session.id)}
       className="flex items-center gap-3 rounded-[6px] border border-hair bg-panel px-3 py-2 text-left hover:border-hairfocus"
     >
       <StatusDot status={session.status} />
+      <Icon size={13} className="shrink-0 text-t3" />
       <span className="shrink-0 text-[13px] font-medium text-t1">{session.name}</span>
       <span className="truncate text-[12px] text-t2">
         {session.lastActivityLine ?? ""}

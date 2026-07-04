@@ -32,10 +32,10 @@ export function useGlobalKeys() {
         ui.toggleSidebar();
         return;
       }
-      // Ctrl+W — close active tab
+      // Ctrl+W — close active tab (of the active project; views are permanent)
       if (mod && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        ui.closeTab(ui.activeTabId);
+        ui.closeActiveTab();
         return;
       }
       // Ctrl+Tab / Ctrl+Shift+Tab — cycle tabs

@@ -1,37 +1,22 @@
 import { create } from "zustand";
-import type { Session, Group } from "@deck/shared";
+import type { Session } from "@deck/shared";
 
 interface SessionsState {
   byId: Record<string, Session>;
-  groups: Group[];
   loaded: boolean;
   setAll: (sessions: Session[]) => void;
-  setGroups: (groups: Group[]) => void;
-  addGroup: (g: Group) => void;
-  updateGroupName: (id: string, name: string) => void;
-  removeGroup: (id: string) => void;
   upsert: (s: Session) => void;
   remove: (id: string) => void;
 }
 
 export const useSessionsStore = create<SessionsState>((set) => ({
   byId: {},
-  groups: [],
   loaded: false,
   setAll: (sessions) =>
     set(() => ({
       byId: Object.fromEntries(sessions.map((s) => [s.id, s])),
       loaded: true,
     })),
-  setGroups: (groups) => set(() => ({ groups })),
-  addGroup: (g) =>
-    set((st) => (st.groups.some((x) => x.id === g.id) ? st : { groups: [...st.groups, g] })),
-  updateGroupName: (id, name) =>
-    set((st) => ({
-      groups: st.groups.map((g) => (g.id === id ? { ...g, name } : g)),
-    })),
-  removeGroup: (id) =>
-    set((st) => ({ groups: st.groups.filter((g) => g.id !== id) })),
   upsert: (s) => set((st) => ({ byId: { ...st.byId, [s.id]: s } })),
   remove: (id) =>
     set((st) => {
@@ -57,7 +42,28 @@ export function selectSessions(byId: Record<string, Session>): Session[] {
   });
 }
 
-// Live sessions = anything not stale/exited (sidebar + overview headline set).
+// Live sessions = anything not stale/exited (sidebar counts + overview set).
 export function isLive(s: Session): boolean {
   return s.status !== "stale" && s.status !== "exited";
+}
+
+// Per-project live-session stats for the sidebar: how many agents are running
+// and whether any need attention.
+export interface ProjectSessionStats {
+  running: number; // working + attention (live and doing/needing something)
+  attention: boolean;
+}
+
+export function selectProjectStats(
+  byId: Record<string, Session>,
+): Map<string, ProjectSessionStats> {
+  const map = new Map<string, ProjectSessionStats>();
+  for (const s of Object.values(byId)) {
+    if (s.status !== "working" && s.status !== "attention") continue;
+    const cur = map.get(s.projectId) ?? { running: 0, attention: false };
+    cur.running += 1;
+    if (s.status === "attention") cur.attention = true;
+    map.set(s.projectId, cur);
+  }
+  return map;
 }

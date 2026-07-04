@@ -16,8 +16,6 @@ export function GitTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<SelectedFile | null>(null);
   const [commitHash, setCommitHash] = useState<string | null>(null);
-  const setProjectSubtab = useUIStore((s) => s.setProjectSubtab);
-  const tabId = `project:${projectId}`;
 
   useEffect(() => {
     eventsClient.subscribe([`git:${projectId}`]);
@@ -54,7 +52,7 @@ export function GitTab({ projectId }: { projectId: string }) {
 
   const openInFiles = (path: string) => {
     useUIStore.getState().requestFile(projectId, path);
-    setProjectSubtab(tabId, "files");
+    useUIStore.getState().openProject(projectId, "files");
   };
 
   return (

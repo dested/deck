@@ -3,15 +3,12 @@ import { Bot, SquareTerminal, X } from "lucide-react";
 import type { Session } from "@deck/shared";
 import { StatusDot } from "../ui/StatusDot";
 import { useUIStore } from "../../stores/uiStore";
-import { useSessionsStore } from "../../stores/sessionsStore";
 import { relTime } from "../../lib/format";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
 
 export function SessionCard({ session }: { session: Session }) {
   const openSession = useUIStore((s) => s.openSession);
-  const groups = useSessionsStore((s) => s.groups);
-  const group = groups.find((g) => g.id === session.groupId);
   const Icon = session.kind === "claude" ? Bot : SquareTerminal;
   const [, force] = useState(0);
   // Re-render relative timestamps every 15s.
@@ -35,11 +32,6 @@ export function SessionCard({ session }: { session: Session }) {
         <span className="truncate text-[13px] font-medium text-t1">
           {session.name}
         </span>
-        {group && (
-          <span className="rounded-[4px] bg-raised px-1.5 py-0.5 text-[10.5px] text-t2">
-            {group.name}
-          </span>
-        )}
         <button
           onClick={(e) => {
             e.stopPropagation();

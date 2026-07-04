@@ -1,10 +1,12 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Pin, PinOff, EyeOff, Bot, SquareTerminal, FolderOpen, Copy } from "lucide-react";
+import { Pin, PinOff, EyeOff, Bot, SquareTerminal, FolderOpen, Copy, Zap } from "lucide-react";
 import type { ProjectSummary } from "@deck/shared";
 import { cn } from "../../lib/cn";
 import { api } from "../../lib/api";
 import { spawnSession } from "../../lib/sessions";
 import { useUIStore } from "../../stores/uiStore";
+import type { ProjectSessionStats } from "../../stores/sessionsStore";
+import { relTime } from "../../lib/format";
 import {
   menuContent,
   menuContentStyle,
@@ -15,14 +17,21 @@ import {
 export function ProjectRow({
   project,
   active,
+  stats,
+  lastOpenedAt,
 }: {
   project: ProjectSummary;
   active: boolean;
+  stats?: ProjectSessionStats;
+  lastOpenedAt?: number;
 }) {
   const openProject = useUIStore((s) => s.openProject);
 
   const newSession = (kind: "claude" | "shell") =>
     void spawnSession(project.id, kind).catch(() => {});
+
+  const running = stats?.running ?? 0;
+  const attention = stats?.attention ?? false;
 
   return (
     <ContextMenu.Root>
@@ -30,23 +39,31 @@ export function ProjectRow({
         <button
           onClick={() => openProject(project.id)}
           className={cn(
-            "group flex h-[30px] w-full items-center gap-2 rounded-[6px] px-2 text-left text-[13px]",
-            "transition-colors",
-            active
-              ? "bg-raised text-t1"
-              : "text-t2 hover:bg-raised hover:text-t1",
+            "group flex h-[30px] w-full items-center gap-2 rounded-[6px] px-2 text-left text-[13px] transition-colors",
+            attention && "border-l-2 border-[color:var(--warn)] pl-[6px]",
+            active ? "bg-raised text-t1" : "text-t2 hover:bg-raised hover:text-t1",
           )}
         >
           {project.pinned && (
             <Pin size={11} className="shrink-0 text-t3" fill="currentColor" />
           )}
           <span className="truncate">{project.name}</span>
-          <span className="ml-auto flex items-center gap-1.5">
-            {project.runningSessionCount > 0 && (
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            {lastOpenedAt != null && (
+              <span className="mono text-[10.5px] text-t3 opacity-0 transition-opacity group-hover:opacity-100">
+                {relTime(lastOpenedAt)}
+              </span>
+            )}
+            {running > 0 && (
               <span
-                className="h-[6px] w-[6px] rounded-full deck-pulse"
-                style={{ background: "var(--ok)" }}
-              />
+                className={cn(
+                  "flex items-center gap-0.5 tabular-nums",
+                  attention ? "text-[color:var(--warn)]" : "text-[color:var(--ok)]",
+                )}
+              >
+                <Zap size={11} className={cn(!attention && "deck-pulse")} fill="currentColor" />
+                <span className="mono text-[11px]">{running}</span>
+              </span>
             )}
             {project.dirtyCount != null && project.dirtyCount > 0 && (
               <span className="mono text-[11px] tabular-nums text-t2">

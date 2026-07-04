@@ -1,24 +1,32 @@
-import { useRef, useMemo } from "react";
+import { useRef, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Search, Settings, Eye } from "lucide-react";
+import { Search, Settings, Eye, Home } from "lucide-react";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
+import {
+  useSessionsStore,
+  selectProjectStats,
+} from "../stores/sessionsStore";
 import { useUIStore } from "../stores/uiStore";
 import { ProjectRow } from "./sidebar/ProjectRow";
-import { SessionList } from "./sidebar/SessionList";
-import { useState } from "react";
+import { cn } from "../lib/cn";
 
 export function Sidebar() {
   const byId = useProjectsStore((s) => s.byId);
   const loaded = useProjectsStore((s) => s.loaded);
+  const sessions = useSessionsStore((s) => s.byId);
   const search = useUIStore((s) => s.search);
   const setSearch = useUIStore((s) => s.setSearch);
-  const activeTabId = useUIStore((s) => s.activeTabId);
+  const activeProjectId = useUIStore((s) => s.activeProjectId);
+  const lastOpenedAt = useUIStore((s) => s.lastOpenedAt);
+  const goHome = useUIStore((s) => s.goHome);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const [showHidden, setShowHidden] = useState(false);
 
+  const stats = useMemo(() => selectProjectStats(sessions), [sessions]);
+
   const visible = useMemo(
-    () => selectSortedProjects(byId, { query: search }),
-    [byId, search],
+    () => selectSortedProjects(byId, { query: search, lastOpenedAt }),
+    [byId, search, lastOpenedAt],
   );
   const hiddenCount = useMemo(
     () => Object.values(byId).filter((p) => p.hidden).length,
@@ -27,16 +35,14 @@ export function Sidebar() {
   const hiddenList = useMemo(
     () =>
       showHidden
-        ? selectSortedProjects(byId, { query: search, includeHidden: true }).filter(
-            (p) => p.hidden,
-          )
+        ? selectSortedProjects(byId, {
+            query: search,
+            includeHidden: true,
+            lastOpenedAt,
+          }).filter((p) => p.hidden)
         : [],
-    [byId, search, showHidden],
+    [byId, search, showHidden, lastOpenedAt],
   );
-
-  const activeProjectId = activeTabId.startsWith("project:")
-    ? activeTabId.slice("project:".length)
-    : null;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const rows = showHidden ? [...visible, ...hiddenList] : visible;
@@ -68,26 +74,30 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Sessions section */}
-      <div className="shrink-0 px-3 pb-2">
-        <div className="section-label mb-1 px-1">Sessions</div>
-        <div className="max-h-[38vh] overflow-y-auto">
-          <SessionList />
-        </div>
+      {/* Home / overview */}
+      <div className="px-3 pb-2">
+        <button
+          onClick={goHome}
+          className={cn(
+            "flex h-[30px] w-full items-center gap-2 rounded-[6px] px-2 text-left text-[13px] transition-colors",
+            activeProjectId === null
+              ? "bg-raised text-t1"
+              : "text-t2 hover:bg-raised hover:text-t1",
+          )}
+        >
+          <Home size={14} className="shrink-0 text-t3" />
+          <span>Overview</span>
+        </button>
       </div>
 
       {/* Projects section */}
       <div className="section-label mb-1 px-4">Projects</div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-        {!loaded && (
-          <div className="px-2 py-1 text-[12px] text-t3">Scanning…</div>
-        )}
+        {!loaded && <div className="px-2 py-1 text-[12px] text-t3">Scanning…</div>}
         {loaded && visible.length === 0 && (
           <div className="px-2 py-1 text-[12px] text-t3">No projects</div>
         )}
-        <div
-          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-        >
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((vi) => {
             const p = rows[vi.index]!;
             return (
@@ -102,7 +112,12 @@ export function Sidebar() {
                   height: 30,
                 }}
               >
-                <ProjectRow project={p} active={p.id === activeProjectId} />
+                <ProjectRow
+                  project={p}
+                  active={p.id === activeProjectId}
+                  stats={stats.get(p.id)}
+                  lastOpenedAt={lastOpenedAt[p.id]}
+                />
               </div>
             );
           })}
