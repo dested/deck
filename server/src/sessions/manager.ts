@@ -1,0 +1,289 @@
+import { randomUUID } from "node:crypto";
+import type { Session } from "@deck/shared";
+import { ptyManager, type PtyRecord, type PtyKind } from "../pty/manager.js";
+import { projectRegistry } from "../projects/registry.js";
+import { getState, updateState } from "../state.js";
+import { eventHub, topics } from "../ws/events.js";
+import { linkOwnedClaude } from "../transcripts/linker.js";
+import { transcriptRegistry } from "../transcripts/registry.js";
+
+const WORKING_WINDOW_MS = 20_000; // (§7.4)
+
+export interface CreateSessionInput {
+  projectId: string;
+  kind: PtyKind;
+  name?: string;
+  groupId?: string;
+  claudeArgs?: string[];
+}
+
+// Owns app-owned sessions (backed by PtyManager). External transcript sessions
+// are merged in by the transcript service (M3) via `externalProvider`.
+class SessionManager {
+  // sessionId -> ptyId (they are equal today, but keep the indirection)
+  private owned = new Map<string, string>();
+  private unread = new Set<string>();
+  private lastKey = new Map<string, string>();
+  // provider for external sessions, installed by M3
+  private externalProvider: (() => Session[]) | null = null;
+
+  setExternalProvider(fn: () => Session[]) {
+    this.externalProvider = fn;
+  }
+
+  create(input: CreateSessionInput): Session {
+    const projectPath = projectRegistry.getPath(input.projectId);
+    if (!projectPath) throw new Error("unknown project");
+    const id = randomUUID();
+    const short = id.slice(0, 4);
+    const name =
+      input.name ??
+      `${input.projectId} ${input.kind === "shell" ? "sh" : "cc"}·${short}`;
+
+    updateState((s) => {
+      s.sessionNames[id] = name;
+      s.sessionGroups[id] = input.groupId ?? null;
+    });
+
+    const rec = ptyManager.spawn({
+      id,
+      kind: input.kind,
+      projectId: input.projectId,
+      projectPath,
+      claudeArgs: input.claudeArgs,
+    });
+    this.owned.set(id, id);
+
+    // §5.2 link the transcript this claude session writes.
+    if (input.kind === "claude") {
+      // If resuming a known transcript, we already know its id.
+      const resumeIdx = input.claudeArgs?.indexOf("--resume") ?? -1;
+      const resumeId =
+        resumeIdx >= 0 ? input.claudeArgs?.[resumeIdx + 1] : undefined;
+      if (resumeId) {
+        rec.transcriptSessionId = resumeId;
+      } else {
+        linkOwnedClaude(projectPath, (tid) => {
+          const r = ptyManager.get(id);
+          if (r) {
+            r.transcriptSessionId = tid;
+            this.publishOwned(id);
+          }
+        });
+      }
+    }
+
+    ptyManager.onData(id, () => {
+      this.unread.add(id);
+      this.publishOwned(id);
+    });
+    ptyManager.onExit(id, () => {
+      this.publishOwned(id);
+      this.syncRunningCounts();
+    });
+
+    this.syncRunningCounts();
+    const session = this.toSession(rec);
+    this.publish(session);
+    return session;
+  }
+
+  // Restart a claude session: kill it, then resume its transcript in a new pty.
+  restart(id: string): Session | null {
+    const rec = ptyManager.get(id);
+    if (!rec || rec.kind !== "claude") return null;
+    const transcriptId = rec.transcriptSessionId;
+    const name = getState().sessionNames[id];
+    const groupId = getState().sessionGroups[id] ?? undefined;
+    ptyManager.kill(id);
+    return this.create({
+      projectId: rec.projectId,
+      kind: "claude",
+      name,
+      groupId,
+      claudeArgs: transcriptId ? ["--resume", transcriptId] : [],
+    });
+  }
+
+  // Adopt an external session: start an owned claude that resumes its transcript.
+  adopt(externalSessionId: string, projectId: string): Session {
+    return this.create({
+      projectId,
+      kind: "claude",
+      claudeArgs: ["--resume", externalSessionId],
+    });
+  }
+
+  kill(id: string): boolean {
+    if (!this.owned.has(id)) return false;
+    ptyManager.kill(id);
+    return true;
+  }
+
+  rename(id: string, name: string) {
+    updateState((s) => {
+      s.sessionNames[id] = name;
+    });
+    if (this.owned.has(id)) this.publishOwned(id);
+  }
+
+  assignGroup(id: string, groupId: string | null) {
+    updateState((s) => {
+      s.sessionGroups[id] = groupId;
+    });
+    this.publishById(id);
+  }
+
+  // Publish a session update by id regardless of source (owned or external).
+  publishById(id: string) {
+    if (this.owned.has(id)) {
+      this.publishOwned(id);
+      return;
+    }
+    const session = this.list().find((s) => s.id === id);
+    if (session) this.publish(session);
+  }
+
+  input(id: string, text: string, submit: boolean) {
+    if (!this.owned.has(id)) return false;
+    // Multiline -> bracketed paste (§5.4 / §7.5), then CR to submit.
+    if (text.includes("\n")) {
+      ptyManager.write(id, `\x1b[200~${text}\x1b[201~`);
+    } else {
+      ptyManager.write(id, text);
+    }
+    if (submit) ptyManager.write(id, "\r");
+    return true;
+  }
+
+  clearUnread(id: string) {
+    if (this.unread.delete(id)) this.publishOwned(id);
+  }
+
+  ownedSessions(): Session[] {
+    const out: Session[] = [];
+    for (const id of this.owned.keys()) {
+      const rec = ptyManager.get(id);
+      if (rec) out.push(this.toSession(rec));
+    }
+    return out;
+  }
+
+  list(): Session[] {
+    const owned = this.ownedSessions();
+    const external = this.externalProvider?.() ?? [];
+    // External sessions linked to an owned pty are hidden (owned wins).
+    const ownedTranscriptIds = new Set(
+      owned.map((s) => s.transcriptSessionId).filter(Boolean),
+    );
+    return [
+      ...owned,
+      ...external.filter((e) => !ownedTranscriptIds.has(e.id)),
+    ];
+  }
+
+  getPtyId(sessionId: string): string | null {
+    return this.owned.get(sessionId) ?? null;
+  }
+
+  // The transcript file id backing a session. Owned claude sessions link theirs
+  // in M4; external sessions ARE their transcript id.
+  resolveTranscriptId(sessionId: string): string | null {
+    if (this.owned.has(sessionId)) {
+      const rec = ptyManager.get(sessionId);
+      return rec?.transcriptSessionId ?? null;
+    }
+    return sessionId; // external
+  }
+
+  isOwned(sessionId: string): boolean {
+    return this.owned.has(sessionId);
+  }
+
+  private toSession(rec: PtyRecord): Session {
+    const state = getState();
+    const now = Date.now();
+    let status: Session["status"];
+    let lastActivityLine: string | null = null;
+    let title: string | null = null;
+
+    if (rec.status === "exited") {
+      status = "exited";
+    } else if (rec.kind === "claude" && rec.transcriptSessionId) {
+      // Owned claude status/attention comes from its transcript (§7.4).
+      const d = transcriptRegistry.describe(rec.transcriptSessionId);
+      if (d) {
+        status = d.status === "stale" ? "idle" : d.status;
+        lastActivityLine = d.lastActivityLine;
+        title = d.title;
+      } else {
+        status = now - rec.lastActivityAt < WORKING_WINDOW_MS ? "working" : "idle";
+      }
+    } else {
+      status = now - rec.lastActivityAt < WORKING_WINDOW_MS ? "working" : "idle";
+    }
+
+    return {
+      id: rec.id,
+      kind: rec.kind,
+      source: "owned",
+      projectId: rec.projectId,
+      projectPath: rec.projectPath,
+      name: state.sessionNames[rec.id] ?? rec.id,
+      groupId: state.sessionGroups[rec.id] ?? null,
+      status,
+      ptyId: rec.id,
+      transcriptSessionId: rec.transcriptSessionId,
+      transcriptPath: null,
+      exitCode: rec.exitCode,
+      createdAt: rec.createdAt,
+      activityAt: rec.lastActivityAt,
+      lastActivityLine,
+      unread: this.unread.has(rec.id),
+      title,
+    };
+  }
+
+  ownedTranscriptIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const id of this.owned.keys()) {
+      const rec = ptyManager.get(id);
+      if (rec?.transcriptSessionId) ids.add(rec.transcriptSessionId);
+    }
+    return ids;
+  }
+
+  private publishOwned(id: string) {
+    const rec = ptyManager.get(id);
+    if (!rec) return;
+    const session = this.toSession(rec);
+    const key = `${session.status}|${session.name}|${session.groupId}|${session.unread}|${session.exitCode}|${session.activityAt}|${session.lastActivityLine}`;
+    if (this.lastKey.get(id) === key) return;
+    this.lastKey.set(id, key);
+    this.publish(session);
+  }
+
+  publish(session: Session) {
+    eventHub.publish([topics.sessions], {
+      t: "sessions.updated",
+      payload: session,
+    });
+  }
+
+  publishRemoved(id: string) {
+    eventHub.publish([topics.sessions], { t: "sessions.removed", id });
+  }
+
+  syncRunningCounts() {
+    projectRegistry.setRunningCounts(ptyManager.runningCountByProject());
+  }
+
+  // Recompute statuses on a timer so working->idle transitions propagate (§7.4).
+  startStatusTicker() {
+    setInterval(() => {
+      for (const id of this.owned.keys()) this.publishOwned(id);
+    }, 5_000).unref?.();
+  }
+}
+
+export const sessionManager = new SessionManager();

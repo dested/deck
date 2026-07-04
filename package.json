@@ -1,0 +1,17 @@
+{
+  "name": "deck",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["shared", "server", "web"],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"bun run --filter @deck/server dev\" \"bun run --filter @deck/web dev\"",
+    "build": "bun run --filter @deck/web build",
+    "start": "bun run --filter @deck/server start",
+    "typecheck": "bun run --filter @deck/server typecheck && bun run --filter @deck/web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

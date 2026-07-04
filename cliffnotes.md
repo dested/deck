@@ -1,0 +1,317 @@
+# Deck — CliffNotes
+
+> Living map of Deck, a localhost mission-control web app for projects + Claude
+> Code agents. Read this before any coding session. Spec of record: `SPEC.md`
+> (locked). Build order: milestones M0→M6 in SPEC §13.
+
+Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
+
+---
+
+## Deviations from SPEC.md (record every forced one here)
+
+1. **Git-heartbeat watcher tier (addition to §4.3).** SPEC's repo tier watches a
+   project's worktree only while it is *open*, and §4.1 forbids recursively
+   statting worktrees for recency. To make "touching a file in **any** repo
+   bumps it within 2s" (M1 verify) work for *closed* projects, we additionally
+   watch just the two files `<repo>/.git/index` and `<repo>/.git/HEAD` for every
+   project (depth 0, no worktree recursion). Real `git` operations rewrite these,
+   so activity + dirty-count live-update within ~200ms debounce. Lives in
+   `server/src/projects/watcher.ts` (`startGitHeartbeatTier` / `syncGitHeartbeat`).
+   Note: a pure `touch` (mtime-only, no content change) does NOT fire on Windows
+   `fs.watch`; real git writes (content) do. The transcript tier remains the
+   primary heartbeat.
+
+2. **Ligatures under WebGL (§5.4 internal conflict).** §5.4 requires BOTH the
+   WebGL renderer (P0 performance) AND "ligatures ON". In xterm these are
+   mutually exclusive — the ligatures addon only works with the DOM/canvas
+   renderer and is not in the §1 locked addon list. WebGL wins (explicit P0
+   perf mandate); JetBrains Mono's programming ligatures therefore do not render
+   as glyphs. Everything else on the §5.4 checklist is honored. `fontWeightBold`
+   is still 600.
+
+---
+
+## Run commands
+
+```
+bun install                      # once
+bun run dev                      # server (12345) + Vite (12346, proxies /api,/ws) — open http://127.0.0.1:12346
+bun run build && bun start       # prod: build web, serve everything on http://127.0.0.1:12345
+bun run typecheck                # tsc --noEmit for both packages
+```
+
+Kill a stuck server: PowerShell `Get-NetTCPConnection -LocalPort 12345 -State Listen | %{ Stop-Process -Id $_.OwningProcess -Force }`.
+
+---
+
+## Layout / file map
+
+```
+agentcommunity/
+  SPEC.md                 locked spec
+  cliffnotes.md           this file
+  deck.config.json        optional overrides (root/port/claudeDir/claudeBin/defaultShell)
+  shared/src/index.ts     ALL shared types (single source of truth) — pkg @deck/shared
+  server/  (Node 22 via tsx; NOT bun runtime — node-pty needs stable ConPTY)
+    src/
+      index.ts            fastify bootstrap: /ws/events, /ws/term, /api/*, static (prod), SPA fallback
+      config.ts           config + deck.config.json overrides. repoRoot, root, port, claudeDir…
+      state.ts            ~/.deck/state.json (atomic write, 500ms debounce): groups, names, pins, owned sessions
+      services.ts         boot: scanner rescan + top-30 git prime + watchers + 60s rescan
+      projects/
+        scanner.ts        discover G:\code children with .git; activityAt (§4.1)
+        registry.ts       in-memory ProjectSummary map; refreshGit; live publish; pins/hidden decorate
+        watcher.ts        tiers: root / transcript(heartbeat) / git-heartbeat(deviation) / repo(open only)
+      git/service.ts      execa git; porcelain=v2 -z parser (getStatus/summarize). M5 adds diff/stage/commit
+      transcripts/
+        locator.ts        encoded-path map (§4.2), transcriptDirs/FilesForProject
+        tailer.ts         change-hook (M1 stub) → full tail in M3
+        parser.ts         (M3) jsonl → TranscriptEvent[]
+      pty/manager.ts      (M1 STUB: claude-bin resolve + interface) → full ConPTY in M2
+      routes/
+        projects.ts       GET /projects, /:id, pin, hide, reveal
+        git.ts            GET /:id/git/status  (rest in M5)
+        sessions.ts       (M0 stub → M3/M4)
+        files.ts          (stub → M6)
+      ws/
+        events.ts         pub-sub hub + topic refcounts + subHandler (drives repo watchers)
+        term.ts           (stub → M2)
+  web/  (React 19 + Vite + Tailwind v4)
+    public/fonts/         Inter-Variable.woff2, JetBrainsMono-Variable.woff2 (self-hosted)
+    public/favicon*.svg   base + alert (attention badge, §11)
+    src/
+      main.tsx            QueryClient + connectEvents + render
+      App.tsx             shell: Sidebar | (TabBar + MainArea); global keys; attention badge
+      theme/tokens.css    §8 tokens (@theme + :root vars), fonts, base, the one pulse anim
+      lib/
+        api.ts            typed REST client (all endpoints, some land later)
+        ws.ts             /ws/events client: reconnect, topic refcount, dispatch→stores, RQ invalidate
+        format.ts         relTime, splitPath, dayBucket
+        useGlobalKeys.ts  §10 keyboard map
+        useAttentionBadge.ts  document.title + favicon swap
+        cn.ts
+      stores/
+        projectsStore.ts  zustand: byId + selectSortedProjects
+        sessionsStore.ts  zustand: sessions + groups + selectSessions
+        uiStore.ts        persisted: tabs, activeTab, sidebar, fontsize, palette/settings open
+      components/
+        Sidebar.tsx       header/search, SESSIONS (SessionList), PROJECTS (virtualized ProjectRow), footer
+        TabBar.tsx        editor-style tabs, middle-click close, accent active
+        MainArea.tsx      routes active tab → view
+        ui/               StatusDot, Tooltip, IconButton, Button, EmptyState, menuStyles
+        sidebar/          ProjectRow (+context menu), SessionRow, SessionList (groups)
+        home/SessionCard.tsx
+        project/          AgentsTab, GitTab, FilesTab, TerminalsTab (M1 placeholders)
+      views/              HomeView, ProjectView, SessionView(stub), GridView(stub)
+      components/CommandPalette.tsx, SettingsDialog.tsx  (stubs → M6)
+```
+
+---
+
+## Protocol quick-ref (see SPEC §3)
+
+- REST under `/api` (see `web/src/lib/api.ts` for the full typed list).
+- `/ws/events` JSON pub-sub. Client `{op:"sub",topics:[...]}`; topics: `projects`,
+  `sessions`, `git:<id>`, `transcript:<sessionId>`. Server pushes `projects.updated/removed`,
+  `sessions.updated/removed`, `git.updated`, `transcript.append`, `session.attention`.
+  Subscribing to `git:<id>` opens that project's repo watcher (refcounted, 5-min teardown).
+- `/ws/term/:ptyId` raw binary bridge (M2).
+
+## Encoded transcript paths (§4.2)
+`encodePath` = replace every non-`[A-Za-z0-9-]` char with `-`. Verified:
+`G:\code\scenebeans2`→`G--code-scenebeans2`, `G:\code\shitpost.gg`→`G--code-shitpost-gg`.
+A dir maps to a project by longest-prefix (`==` or `<enc>-…`).
+
+## Transcript JSONL ground truth (verified on this machine, for M3)
+Line `type`s seen: `user`, `assistant`, `system`, `summary`(rare), `mode`,
+`permission-mode`, `file-history-snapshot`, `attachment`, `last-prompt`,
+`ai-title`, `queue-operation`, `frame-link`, `agent-name`. `user`/`assistant`
+carry `message` (Anthropic format; content string or block array). Block types:
+`text`, `thinking`, `tool_use`, `tool_result`, `image`. Edit tool uses
+`old_string`/`new_string`; Write uses `content`; MultiEdit uses `edits[]`.
+`tool_result` may be string or block; `is_error` marks failures; outer line may
+carry structured `toolUseResult`. `isSidechain:true` = subagent. `ai-title`
+gives a session title. **Parser must skip unknown line/block types, never crash.**
+
+---
+
+## Milestone status
+- **M0 skeleton** ✅ boots dev+prod, WS echo verified, tokens/shell/fonts in place.
+- **M1 projects** ✅ 149 projects discovered, activity sort, dirty count matches
+  `git status` exactly, live-bump via transcript (~620ms) and git-heartbeat
+  (~820ms), project list + project-view shell. No console errors.
+- **M2 terminals (P0)** ✅ Full §5.4 acceptance test passed in-browser: shell
+  spawns, native typing, exact ANSI palette + PSReadLine highlighting, resize
+  with NO ConPTY garble (sidebar toggle reflow), reattach restores the screen
+  perfectly after browser refresh, `claude` runs interactively (TUI/box-drawing
+  render correctly, input reaches its prompt), kill→exited (code retained).
+  Reattach via server-side headless-serialize snapshot (216-char restore verified).
+- **M3 agent view** ✅ Parser runs over all 133 real transcripts with ZERO
+  crashes (20,791 events). External discovery + statuses + AI titles work;
+  home/sidebar populate; feed renders tools (one-line, expandable), edits-as-
+  mini-diffs (dual-gutter +/- tints), thinking (collapsed), markdown (headings/
+  code/lists), subagent cards, following pill. 1272-event transcript scrolls
+  smooth & virtualized. Live external tail streams into the feed (~2s). History
+  (5 live/44 past) via /projects/:id/agent-sessions.
+- **M4 own sessions** ✅ Verified: spawn claude from Deck → transcript links
+  after first message → split feed+terminal view → composer sends → feed live-
+  appends user+assistant turns in real time (feed+terminal in sync). Groups
+  (create/assign via context menu) + grid view (owned=terminal, external=feed
+  cells) work. restart/adopt endpoints + notifications (title badge "(N!)"
+  verified). Three non-obvious fixes below.
+- **M5 git** ✅ Verified against a real repo: status lists (staged/changes,
+  glyphs, untracked=U), custom hunk renderer with dual gutters + red/green tints
+  + word-level intra highlights, **byte-exact hunk staging** (staged 1 of 2
+  hunks → `git diff --cached` matched exactly, other hunk stayed unstaged),
+  commit (only staged hunk committed, panel refreshed), Monaco full-file diff
+  (side-by-side HEAD vs worktree, §8 theme), discard-hunk, log/history + commit
+  viewer, and LIVE refresh (agent-created file appeared in Changes within ~2s).
+- **M6 files + polish** ✅ Files tab (lazy virtualized tree with git-modified
+  amber dots + ignored toggle; Monaco editor with Ctrl+S save), command palette
+  (Ctrl+K, fuzzy across actions/projects/sessions), settings dialog (root/port/
+  shell/claude-bin + font slider + notifications toggle), full keyboard map,
+  empty/loading/focus/tooltip states. Verified keyboard-only spawn+interact via
+  palette. Two polish fixes below.
+
+**ALL MILESTONES M0→M6 COMPLETE AND VERIFIED.**
+
+### M6 file map additions
+```
+server/src/files/io.ts, tree.ts        read/write (repo-guard+retry), lazy tree
+server/src/routes/files.ts             tree/file GET, file PUT
+web/src/components/files/FileTree.tsx  virtualized lazy tree, git dots, ignored
+web/src/components/files/FileEditor.tsx  Monaco (lazy) + Ctrl+S save
+web/src/components/project/FilesTab.tsx
+web/src/components/CommandPalette.tsx  Ctrl+K fuzzy palette
+web/src/components/SettingsDialog.tsx  §9.6
+web/src/lib/monacoSetup.ts             SELF-HOST monaco (loader.config + workers)
+web/src/lib/monacoTheme.ts             deck-dark theme
+```
+
+### M6 polish fixes (keep)
+1. **Monaco must be self-hosted** (`web/src/lib/monacoSetup.ts`). `@monaco-editor/
+   react` fetches monaco from jsdelivr by default (breaks §1 no-CDN + offline).
+   `loader.config({ monaco })` + Vite `?worker` imports for the 5 language workers
+   pin it to the bundled copy. Import monacoSetup at the top of every lazy Monaco
+   component (FileEditor, MonacoDiff).
+2. **Notification permission request must be fire-and-forget** (`web/src/lib/
+   sessions.ts`). `await Notification.requestPermission()` BLOCKS the first spawn
+   on the browser prompt — never await it.
+
+### M5 file map additions
+```
+server/src/git/diffParser.ts    unified diff -> Hunk[] (raw patch kept for
+                                byte-faithful apply; word-level intra highlights)
+server/src/git/service.ts       +getDiff (untracked synth all-add), getFileAtHead,
+                                stage/unstage, applyHunk (git apply --cached[-R]),
+                                discardHunk (git apply -R worktree), discard,
+                                commit (-F -), log, show, showFileDiff
+server/src/files/io.ts, tree.ts read/write with repo-root guard + retry (also M6)
+server/src/routes/git.ts        all §6 endpoints + discard-hunk, show-file
+server/src/routes/files.ts      tree/file GET + file PUT
+web/src/components/git/*         GitTab, StatusList, DiffViewer, MonacoDiff (lazy),
+                                CommitBox, LogPanel, CommitDiff
+web/src/lib/monacoTheme.ts       deck-dark Monaco theme + language map
+web/src/components/diff/DiffLines.tsx  (shared with feed edits)
+```
+Hunk apply is byte-faithful: patch = `diff.fileHeader + "\n" + hunk.patch` piped
+to `git apply --cached --whitespace=nowarn` (verified vs `git diff --cached`).
+
+### M4 file map additions
+```
+server/src/transcripts/linker.ts  §5.2 linkage: poll encoded dir for the new
+                                  jsonl (matching cwd) claude writes on 1st msg.
+                                  PATIENT (~15min) — transcript only appears on
+                                  first message, not at spawn.
+server/src/sessions/manager.ts    +restart (kill+--resume), +adopt (--resume ext),
+                                  +owned-claude status from transcript describe(),
+                                  +ownedTranscriptIds() dedup, +publishById
+server/src/routes/sessions.ts     +restart/adopt, +groups CRUD/assign, +transcript
+web/src/components/session/Composer.tsx, ClaudeSessionView.tsx (split+divider+Ctrl+`),
+    SessionContextMenu.tsx, AdoptBanner.tsx
+web/src/views/GridView.tsx        §9.5 group grid (1/2/2x2/3x2, cap 6)
+web/src/lib/sessions.ts (spawn helper + notif perm), useNotifications.ts (§11)
+```
+
+### M4 critical fixes (non-obvious — keep)
+1. **Strip CLAUDE_CODE_* env when spawning PTYs** (`pty/manager.ts cleanEnv`).
+   If Deck is launched from inside a Claude Code session, the inherited
+   `CLAUDE_CODE_CHILD_SESSION=1` / `CLAUDE_CODE_SESSION_ID` make a nested claude
+   run as a child that NEVER writes its own transcript → §5.2 linkage silently
+   fails. Stripping `^CLAUDE(CODE)?(_|$)` makes spawned claude a top-level session.
+2. **Live-append baseline must be independent of the parse cache**
+   (`transcripts/registry.ts emittedSigs`). The owned-status ticker also calls
+   getParsed (refreshing the mtime cache), which would "consume" the change
+   before onFileChanged's diff saw it → no transcript.append. emittedSigs is a
+   separate per-subscription baseline, seeded on subscribe.
+3. **Feed subscribes to its transcript topic regardless of live status**
+   (`feed/Feed.tsx`). Gating on working/attention raced the status flip after a
+   composer send and dropped the first append.
+Transcript is created by claude on the FIRST message, not at spawn.
+
+### M3 file map additions
+```
+server/src/transcripts/parser.ts    jsonl -> TranscriptEvent[] (TOLERANT: skips
+                                    unknown line/block types, never throws).
+                                    tool pairing by tool_use_id, Edit/Write/
+                                    MultiEdit -> mini-diff (diff pkg), sidechain
+                                    grouping -> subagent cards, humanized titles
+server/src/transcripts/status.ts    §7.4 status heuristics, lastActivityLine,
+                                    cheap eventSignature for live diffing
+server/src/transcripts/registry.ts  session index, mtime-cached parse (LRU 24),
+                                    externalSessions() (<30min), sessionsForProject
+                                    (live/history), onFileChanged live-diff emit,
+                                    tickExternal (status transitions)
+web/src/lib/markdown.ts             marked -> HTML (.deck-md styles in tokens.css)
+web/src/components/diff/DiffLines.tsx   shared DiffLine[] renderer (feed + git)
+web/src/components/feed/FeedEvent.tsx   per-kind event renderer
+web/src/components/feed/Feed.tsx        virtualized, full-load via backward
+                                        pagination, live append, following pill
+web/src/components/project/AgentsTab.tsx  live + history
+web/src/components/session/AdoptBanner.tsx  §7.5 read-only + Adopt (M4)
+```
+
+### M2 file map additions
+```
+server/src/pty/manager.ts     full ConPTY PtyManager: spawn (shell=pwsh -NoLogo;
+                              claude via resolved bin/shim), 2MB RingBuffer,
+                              @xterm/headless + SerializeAddon for reattach,
+                              onData/onExit listeners, kill/dispose, 24h exited retain
+server/src/pty/ringBuffer.ts  bounded 2MB raw-output ring (reattach fallback)
+server/src/sessions/manager.ts owned Session registry: create/kill/rename/input
+                              (bracketed-paste multiline), status heuristics,
+                              running-count sync, 5s status ticker, external provider hook (M3)
+server/src/ws/term.ts         /ws/term/:id binary bridge; sync snapshot-then-attach
+web/src/lib/termSocket.ts     binary WS client (arraybuffer frames + JSON control)
+web/src/lib/termTheme.ts      §8.4 ANSI ITheme
+web/src/components/terminal/Terminal.tsx  xterm + WebGL/fit/search/unicode11/web-links,
+                              debounced fit, WT clipboard, bell glow, in-term search,
+                              global-shortcut key escape
+web/src/components/session/SessionHeader.tsx
+web/src/views/SessionView.tsx (shell = full-pane terminal)
+web/src/components/project/TerminalsTab.tsx (live embedded terminal grid + new tile)
+```
+Import note: `@xterm/headless` + `@xterm/addon-serialize` are CJS — default-import
+and destructure (`const { Terminal } = HeadlessPkg`); named ESM import fails.
+
+## Gotchas
+- Bin resolution: vite/tsx live in workspace `.bin`; root scripts delegate via
+  `bun run --filter @deck/<pkg> <script>`. Don't call `vite`/`tsc` from repo root.
+- `claude` binary on this machine: `C:\nvm4w\nodejs\claude.cmd` (via `where claude`).
+- node-pty@1.1.0 ships win32-x64 prebuilds (`prebuilds/win32-x64/{pty,conpty}.node`) — no native build.
+- Windows `fs.watch` fires on content writes, not mtime-only touches (see deviation #1).
+- Virtualized feed MUST set `scrollbar-gutter: stable` on the scroll container.
+  Without it, variable-height rows toggle the scrollbar, which changes content
+  width → re-wraps text → changes height → toggles scrollbar: a ResizeObserver
+  feedback loop that freezes the renderer for 30s+ on large transcripts. Fixed
+  in `web/src/components/feed/Feed.tsx`.
+- `@xterm/headless`, `@xterm/addon-serialize` are CJS: default-import + destructure.
+- **Shift/Ctrl/Alt+Enter = newline in claude terminals.** xterm sends plain `\r`
+  for Enter regardless of modifiers, so claude's TUI submitted instead of adding
+  a newline. `Terminal.tsx` custom key handler now maps mod+Enter → `\x1b\r`
+  (ESC+CR = macOS Option+Enter / what `/terminal-setup` emits), which claude
+  treats as an inserted newline. Gated behind the `claudeNewline` prop
+  (ClaudeSessionView + owned-claude GridView cells set it) — NOT for shell PTYs,
+  where the ESC prefix would clear the PSReadLine buffer. The pretty Composer
+  already does Shift+Enter=newline via textarea default.
