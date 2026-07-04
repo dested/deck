@@ -7,3 +7,4 @@ deck.config.json
 
 # Deck standalone app-window browser profile
 .deck-app-profile/
+.idea

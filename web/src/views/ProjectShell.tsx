@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   FolderOpen,
@@ -9,13 +9,14 @@ import {
   GitBranch,
   Files,
   X,
+  Plus,
   PanelLeft,
   Code2,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { api } from "../lib/api";
-import { spawnSession } from "../lib/sessions";
+import { spawnSession, closeSession } from "../lib/sessions";
 import { eventsClient } from "../lib/ws";
 import { useProjectsStore } from "../stores/projectsStore";
 import { useSessionsStore } from "../stores/sessionsStore";
@@ -167,11 +168,13 @@ export function ProjectShell({ projectId }: { projectId: string }) {
             </button>
           </Tooltip>
         )}
-        <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
-          {tabs.map((tab) => (
-            <TabButton key={tab.id} tab={tab} active={tab.id === activeTabId} />
-          ))}
-        </div>
+        <TabStrip
+          key={projectId}
+          projectId={projectId}
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onNewSession={newSession}
+        />
       </div>
 
       {/* Active tab content */}
@@ -193,12 +196,137 @@ export function ProjectShell({ projectId }: { projectId: string }) {
   );
 }
 
-function TabButton({ tab, active }: { tab: ProjectTab; active: boolean }) {
+function TabStrip({
+  tabs,
+  activeTabId,
+  onNewSession,
+}: {
+  projectId: string;
+  tabs: ProjectTab[];
+  activeTabId: string;
+  onNewSession: (kind: "claude" | "shell") => void;
+}) {
+  const reorderTab = useUIStore((s) => s.reorderTab);
+  // Which tab is being dragged, and which tab we'd drop before. `null` overId
+  // while dragging means "drop at the end" (over empty strip space).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
+  const endDrag = () => {
+    setDragId(null);
+    setOverId(null);
+  };
+
+  return (
+    <div
+      className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
+      onDragOver={(e) => {
+        if (dragId) {
+          e.preventDefault();
+          setOverId(null); // hovering empty space → append
+        }
+      }}
+      onDrop={(e) => {
+        if (dragId) {
+          e.preventDefault();
+          reorderTab(dragId, null);
+          endDrag();
+        }
+      }}
+    >
+      {tabs.map((tab) => (
+        <TabButton
+          key={tab.id}
+          tab={tab}
+          active={tab.id === activeTabId}
+          dragging={dragId === tab.id}
+          dropBefore={dragId != null && overId === tab.id && dragId !== tab.id}
+          onDragStart={() => setDragId(tab.id)}
+          onDragEnterTab={() => dragId && setOverId(tab.id)}
+          onDropOnTab={() => {
+            if (dragId) {
+              reorderTab(dragId, tab.id);
+              endDrag();
+            }
+          }}
+          onDragEnd={endDrag}
+        />
+      ))}
+      <NewTabButton onNewSession={onNewSession} />
+    </div>
+  );
+}
+
+function NewTabButton({
+  onNewSession,
+}: {
+  onNewSession: (kind: "claude" | "shell") => void;
+}) {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          className="flex w-8 shrink-0 items-center justify-center border-r border-hair text-t3 hover:bg-raised hover:text-t1"
+          aria-label="New session"
+          title="New session or terminal"
+        >
+          <Plus size={15} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          sideOffset={4}
+          className={menuContent}
+          style={menuContentStyle}
+        >
+          <DropdownMenu.Item
+            className={menuItem}
+            onSelect={() => onNewSession("claude")}
+          >
+            <Bot size={14} /> Claude session
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            className={menuItem}
+            onSelect={() => onNewSession("shell")}
+          >
+            <SquareTerminal size={14} /> Terminal
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+function TabButton({
+  tab,
+  active,
+  dragging,
+  dropBefore,
+  onDragStart,
+  onDragEnterTab,
+  onDropOnTab,
+  onDragEnd,
+}: {
+  tab: ProjectTab;
+  active: boolean;
+  dragging: boolean;
+  dropBefore: boolean;
+  onDragStart: () => void;
+  onDragEnterTab: () => void;
+  onDropOnTab: () => void;
+  onDragEnd: () => void;
+}) {
   const activateTab = useUIStore((s) => s.activateTab);
   const closeTab = useUIStore((s) => s.closeTab);
   const sessions = useSessionsStore((s) => s.byId);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
 
   const closable = tab.kind === "session";
+  const renamable = tab.kind === "session";
+  const session = tab.kind === "session" ? sessions[tab.sessionId] : undefined;
+
   let icon: React.ReactNode;
   let text: string;
   if (tab.kind === "view") {
@@ -207,26 +335,67 @@ function TabButton({ tab, active }: { tab: ProjectTab; active: boolean }) {
     icon = <Icon size={13} className="shrink-0 text-t3" />;
     text = meta.label;
   } else {
-    const s = sessions[tab.sessionId];
-    icon = s ? (
-      <StatusDot status={s.status} />
+    icon = session ? (
+      <StatusDot status={session.status} />
     ) : (
       <Bot size={13} className="shrink-0 text-t3" />
     );
-    text = s?.name ?? "Session";
+    text = session?.name ?? "Session";
   }
+
+  // Closing a session tab CLOSES THE AGENT (kills an owned pty / dismisses an
+  // external one) — not just hides the tab. `closeSession` also drops the tab.
+  // Only fall back to a bare tab-remove if the session isn't loaded yet.
+  const closeThisTab = () => {
+    if (tab.kind === "session" && session) closeSession(session);
+    else closeTab(tab.id);
+  };
+
+  const startRename = () => {
+    if (!renamable || !session) return;
+    setName(session.name);
+    setEditing(true);
+  };
+  const commitName = () => {
+    setEditing(false);
+    const n = name.trim();
+    if (session && n && n !== session.name)
+      void api.renameSession(session.id, n).catch(() => {});
+  };
 
   return (
     <div
+      draggable={!editing}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        onDragStart();
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        onDragEnterTab();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onDropOnTab();
+      }}
+      onDragEnd={onDragEnd}
       onMouseDown={(e) => {
         if (e.button === 1 && closable) {
           e.preventDefault();
-          closeTab(tab.id);
+          closeThisTab();
         }
       }}
-      onClick={() => activateTab(tab.id)}
+      onClick={() => !editing && activateTab(tab.id)}
+      onDoubleClick={startRename}
       className={cn(
         "group relative flex h-full min-w-0 max-w-[220px] cursor-default items-center gap-1.5 border-r border-hair px-3 text-[12.5px] transition-colors",
+        dropBefore && "border-l-2 border-l-[color:var(--accent)]",
+        dragging && "opacity-40",
         active
           ? "bg-root text-t1"
           : "bg-panel text-t2 hover:bg-raised hover:text-t1",
@@ -239,15 +408,32 @@ function TabButton({ tab, active }: { tab: ProjectTab; active: boolean }) {
         />
       )}
       {icon}
-      <span className="truncate">{text}</span>
-      {closable && (
+      {editing ? (
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commitName}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commitName();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="h-5 min-w-0 flex-1 rounded-[4px] border border-hairfocus bg-raised px-1 text-[12.5px] text-t1 focus:outline-none"
+        />
+      ) : (
+        <span className="truncate">{text}</span>
+      )}
+      {closable && !editing && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            closeTab(tab.id);
+            closeThisTab();
           }}
           className="ml-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-t3 opacity-0 hover:bg-hair hover:text-t1 group-hover:opacity-100"
-          aria-label="Close tab"
+          aria-label="Close session"
+          title="Close session (kills the agent)"
         >
           <X size={12} />
         </button>

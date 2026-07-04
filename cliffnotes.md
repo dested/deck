@@ -8,6 +8,25 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
 ---
 
+## Tab strip: quick-add / rename / reorder (2026-07-04, batch 4)
+
+Per-project tab strip (`views/ProjectShell.tsx`) got three affordances; all
+client-only (no server/state-shape change beyond a new uiStore action).
+
+- **Quick add.** A browser-style **`+` button** (`NewTabButton`) sits after the
+  last tab; it's the same Claude-session / Terminal dropdown as the header "New
+  session" button, just always in reach at the tab strip. Header button kept.
+- **Rename session tabs.** **Double-click** a session tab → inline `<input>`
+  (Enter commits via `api.renameSession`, Esc cancels) — mirrors `SessionRow`'s
+  sidebar rename; the name is server-side so header + sidebar update too. View
+  tabs (Agents/Git/Files) are not renamable (guarded by `renamable`).
+- **Drag to reorder.** Native HTML5 DnD (no lib, like the Sidebar). New
+  `uiStore.reorderTab(draggedId, targetId|null)` moves a tab before `targetId`
+  (null = append). Drop-before target shows a left accent ring; dragged tab dims.
+  The `TabStrip` container is itself the append drop-zone (drop on empty space →
+  end). All tabs incl. views are freely reorderable. `draggable` is off while an
+  input is editing so rename doesn't start a drag.
+
 ## Recent UX fixes (2026-07-04, batch 3)
 
 - **Close now MEANS close — no more re-adopt ghost.** Closing an owned claude

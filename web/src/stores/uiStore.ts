@@ -70,6 +70,9 @@ interface UIState {
   closeActiveTab: () => void;
   removeSessionTabs: (sessionId: string) => void;
   activateTab: (tabId: string) => void;
+  // Reorder within the active project's tab strip: move `draggedId` to sit
+  // immediately before `targetId` (drop past the end → last position).
+  reorderTab: (draggedId: string, targetId: string | null) => void;
   nextTab: (dir: 1 | -1) => void;
   activateIndex: (i: number) => void;
   // The session id of the active project's active tab, if it's a session tab.
@@ -217,6 +220,31 @@ export const useUIStore = create<UIState>()(
               ...st.projectTabs,
               [pid]: { ...state, activeTabId: tabId },
             },
+          };
+        }),
+
+      reorderTab: (draggedId, targetId) =>
+        set((st) => {
+          const pid = st.activeProjectId;
+          if (!pid || draggedId === targetId) return st;
+          const state = st.projectTabs[pid];
+          if (!state) return st;
+          const from = state.tabs.findIndex((t) => t.id === draggedId);
+          if (from < 0) return st;
+          const dragged = state.tabs[from]!;
+          const without = state.tabs.filter((t) => t.id !== draggedId);
+          let insertAt =
+            targetId == null
+              ? without.length
+              : without.findIndex((t) => t.id === targetId);
+          if (insertAt < 0) insertAt = without.length;
+          const tabs = [
+            ...without.slice(0, insertAt),
+            dragged,
+            ...without.slice(insertAt),
+          ];
+          return {
+            projectTabs: { ...st.projectTabs, [pid]: { ...state, tabs } },
           };
         }),
 

@@ -33,9 +33,13 @@ export function AgentsTab({ projectId }: { projectId: string }) {
     refetchInterval: 15_000,
   });
 
+  // Only push LIVE sessions into the shared store. History rows render straight
+  // from `data.history`; upserting them would let a dismissed-but-still-writing
+  // agent (live status, but parked in history) leak back into the Live section
+  // via the store scan below.
   useEffect(() => {
     if (!data) return;
-    for (const s of [...data.live, ...data.history]) upsert(s);
+    for (const s of data.live) upsert(s);
   }, [data, upsert]);
 
   if (isLoading && !data) {
@@ -52,13 +56,23 @@ export function AgentsTab({ projectId }: { projectId: string }) {
   const isTwin = (s: Session) =>
     s.source === "external" && ownedTranscriptIds.has(s.id);
 
+  const history = (data?.history ?? []).filter((s) => !isTwin(s));
+  // A session the server has parked in history is closed/old — never let the
+  // live store scan promote it back, even if its intrinsic status reads live.
+  const historyIds = new Set(history.map((s) => s.id));
+
   const liveById: Record<string, Session> = {};
   for (const s of data?.live ?? []) if (!isTwin(s)) liveById[s.id] = s;
   for (const s of Object.values(storeById)) {
-    if (s.projectId === projectId && isLive(s) && !isTwin(s)) liveById[s.id] = s;
+    if (
+      s.projectId === projectId &&
+      isLive(s) &&
+      !isTwin(s) &&
+      !historyIds.has(s.id)
+    )
+      liveById[s.id] = s;
   }
   const live = selectSessions(liveById);
-  const history = (data?.history ?? []).filter((s) => !isTwin(s));
 
   if (live.length === 0 && history.length === 0) {
     return (

@@ -53,11 +53,14 @@ class TranscriptRegistry {
     this.ownedChecker = fn;
   }
 
-  // A dismissed external session stays hidden until its transcript is touched
-  // again (mtime moves past the dismiss time) — then it legitimately reappears.
-  private isDismissed(sessionId: string, mtimeMs: number): boolean {
-    const at = getState().dismissedSessions[sessionId];
-    return at != null && mtimeMs <= at;
+  // Close means close, FOREVER. Once you dismiss an agent it stays out of the
+  // live view for good — even if it keeps writing its transcript — instead of
+  // bouncing back the moment its mtime advances. (It remains in the passive
+  // Agents *history* so you can still re-open/adopt it; adopting spawns a fresh
+  // owned session so the dismissal doesn't block it.) The stored timestamp is
+  // now just a marker/audit value; presence alone means dismissed.
+  private isDismissed(sessionId: string): boolean {
+    return getState().dismissedSessions[sessionId] != null;
   }
 
   // Status/activity for an owned claude session's linked transcript.
@@ -199,7 +202,7 @@ class TranscriptRegistry {
     for (const meta of this.index.values()) {
       if (now - meta.mtimeMs > RECENT_MS) continue;
       if (owned.has(meta.sessionId)) continue;
-      if (this.isDismissed(meta.sessionId, meta.mtimeMs)) continue;
+      if (this.isDismissed(meta.sessionId)) continue;
       const parsed = this.getParsed(meta.sessionId);
       if (!parsed) continue;
       out.push(this.toSession(meta, parsed));
@@ -223,7 +226,7 @@ class TranscriptRegistry {
       // A dismissed session is gone from the LIVE view (that's what "close means
       // close" buys), but it stays in the passive Agents *history* so it can be
       // re-opened/adopted. Only genuinely-recent, non-dismissed sessions are live.
-      if (now - meta.mtimeMs <= RECENT_MS && !this.isDismissed(meta.sessionId, meta.mtimeMs)) {
+      if (now - meta.mtimeMs <= RECENT_MS && !this.isDismissed(meta.sessionId)) {
         live.push(s);
       } else {
         history.push(s);
@@ -263,10 +266,7 @@ class TranscriptRegistry {
       // Once an external session goes stale (or is dismissed), drop it from the
       // live clients entirely rather than leaving it stuck in the store — it's
       // still available under the project's Agents history, freshly fetched.
-      if (
-        session.status === "stale" ||
-        this.isDismissed(meta.sessionId, meta.mtimeMs)
-      ) {
+      if (session.status === "stale" || this.isDismissed(meta.sessionId)) {
         if (this.lastKey.delete(meta.sessionId)) {
           eventHub.publish([topics.sessions], {
             t: "sessions.removed",
@@ -331,7 +331,9 @@ class TranscriptRegistry {
     // as external before linkage completed, retract that stray card now.
     const m = this.index.get(sessionId);
     if (m) {
-      if (this.ownedChecker().has(sessionId)) {
+      // Owned twin OR a dismissed ("closed forever") session: never surface it
+      // as a live card. Retract any card a client already drew and stop.
+      if (this.ownedChecker().has(sessionId) || this.isDismissed(sessionId)) {
         if (this.lastKey.delete(sessionId)) {
           eventHub.publish([topics.sessions], {
             t: "sessions.removed",
