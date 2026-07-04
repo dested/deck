@@ -23,6 +23,7 @@ export interface ProjectSummary {
   runningSessionCount: number;
   pinned: boolean;
   hidden: boolean;
+  groupId?: string | null; // project group assignment (null/undefined == ungrouped)
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -241,6 +242,7 @@ export type WsServerMsg =
   | { t: "pong" }
   | { t: "projects.updated"; payload: ProjectSummary }
   | { t: "projects.removed"; id: string }
+  | { t: "project-groups.updated"; payload: Group[] }
   | { t: "sessions.updated"; payload: Session }
   | { t: "sessions.removed"; id: string }
   | { t: "git.updated"; projectId: string }

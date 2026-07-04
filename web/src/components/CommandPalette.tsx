@@ -5,8 +5,7 @@ import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
 import { useSessionsStore, selectSessions, isLive } from "../stores/sessionsStore";
-import { spawnSession } from "../lib/sessions";
-import { api } from "../lib/api";
+import { spawnSession, closeSession } from "../lib/sessions";
 import { cn } from "../lib/cn";
 
 interface Command {
@@ -43,13 +42,12 @@ export function CommandPalette() {
         icon: <Bot size={15} />,
         run: () => ui.openSession(s.id),
       });
-      if (s.source === "owned")
-        cmds.push({
-          id: "kill:" + s.id,
-          label: `Kill ${s.name}`,
-          icon: <X size={15} />,
-          run: () => void api.killSession(s.id).catch(() => {}),
-        });
+      cmds.push({
+        id: "kill:" + s.id,
+        label: `Close ${s.name}`,
+        icon: <X size={15} />,
+        run: () => closeSession(s),
+      });
     }
     for (const p of selectSortedProjects(projects)) {
       cmds.push({

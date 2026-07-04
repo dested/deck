@@ -126,6 +126,18 @@ class SessionManager {
   // and tells clients to remove the card. Returns false for external sessions.
   forceClose(id: string): boolean {
     if (!this.owned.has(id)) return false;
+    // Capture the linked transcript BEFORE the pty record is disposed.
+    const transcriptId = ptyManager.get(id)?.transcriptSessionId ?? null;
+    // Close means close: dismiss the linked transcript FIRST, so dropping this
+    // session from `owned` can't leave even a one-tick window where the
+    // transcript registry re-surfaces it as an EXTERNAL "adopt me" ghost card.
+    // (A killed claude never writes again, so the dismiss holds forever; it
+    // only reappears — legitimately — if the transcript is touched anew.)
+    if (transcriptId) {
+      updateState((s) => {
+        s.dismissedSessions[transcriptId] = Date.now();
+      });
+    }
     ptyManager.dispose(id);
     this.owned.delete(id);
     this.unread.delete(id);
@@ -135,6 +147,8 @@ class SessionManager {
       delete s.sessionGroups[id];
     });
     this.publishRemoved(id);
+    // Retract any external card a client already rendered for this transcript.
+    if (transcriptId && transcriptId !== id) this.publishRemoved(transcriptId);
     this.syncRunningCounts();
     return true;
   }

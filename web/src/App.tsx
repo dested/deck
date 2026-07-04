@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { api } from "./lib/api";
 import { useProjectsStore } from "./stores/projectsStore";
+import { useProjectGroupsStore } from "./stores/projectGroupsStore";
 import { useSessionsStore } from "./stores/sessionsStore";
 import { useUIStore } from "./stores/uiStore";
 import { TooltipProvider } from "./components/ui/Tooltip";
@@ -15,6 +16,7 @@ import { useNotifications } from "./lib/useNotifications";
 
 export function App() {
   const setProjects = useProjectsStore((s) => s.setAll);
+  const setGroups = useProjectGroupsStore((s) => s.setAll);
   const setSessions = useSessionsStore((s) => s.setAll);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const width = useUIStore((s) => s.sidebarWidth);
@@ -22,8 +24,9 @@ export function App() {
 
   useEffect(() => {
     api.projects().then(setProjects).catch(() => {});
+    api.projectGroups().then(setGroups).catch(() => {});
     api.sessions().then(setSessions).catch(() => {});
-  }, [setProjects, setSessions]);
+  }, [setProjects, setGroups, setSessions]);
 
   useGlobalKeys();
   useAttentionBadge();

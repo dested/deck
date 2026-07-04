@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { WsServerMsg, TranscriptEvent } from "@deck/shared";
 import { useProjectsStore } from "../stores/projectsStore";
+import { useProjectGroupsStore } from "../stores/projectGroupsStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 import { useUIStore } from "../stores/uiStore";
 
@@ -90,6 +91,9 @@ class EventsClient {
         break;
       case "projects.removed":
         useProjectsStore.getState().remove(msg.id);
+        break;
+      case "project-groups.updated":
+        useProjectGroupsStore.getState().setAll(msg.payload);
         break;
       case "sessions.updated":
         useSessionsStore.getState().upsert(msg.payload);

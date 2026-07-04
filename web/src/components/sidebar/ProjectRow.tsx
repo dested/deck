@@ -1,6 +1,21 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Pin, PinOff, EyeOff, Bot, SquareTerminal, FolderOpen, Copy, Zap, Code2 } from "lucide-react";
-import type { ProjectSummary } from "@deck/shared";
+import {
+  Pin,
+  PinOff,
+  EyeOff,
+  Bot,
+  SquareTerminal,
+  FolderOpen,
+  Copy,
+  Zap,
+  Code2,
+  FolderInput,
+  ChevronRight,
+  Check,
+  FolderPlus,
+  FolderMinus,
+} from "lucide-react";
+import type { ProjectSummary, Group } from "@deck/shared";
 import { cn } from "../../lib/cn";
 import { api } from "../../lib/api";
 import { spawnSession } from "../../lib/sessions";
@@ -19,13 +34,20 @@ export function ProjectRow({
   active,
   stats,
   lastOpenedAt,
+  groups = [],
 }: {
   project: ProjectSummary;
   active: boolean;
   stats?: ProjectSessionStats;
   lastOpenedAt?: number;
+  groups?: Group[];
 }) {
   const openProject = useUIStore((s) => s.openProject);
+
+  const moveToNewGroup = async () => {
+    const g = await api.createProjectGroup("New group");
+    await api.assignProjectGroup(g.id, project.id);
+  };
 
   const newSession = (kind: "claude" | "shell") =>
     void spawnSession(project.id, kind).catch(() => {});
@@ -88,6 +110,48 @@ export function ProjectRow({
           >
             <EyeOff size={14} /> Hide
           </ContextMenu.Item>
+          <ContextMenu.Separator className={menuSeparator} />
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger className={menuItem}>
+              <FolderInput size={14} /> Move to group
+              <ChevronRight size={13} className="ml-auto text-t3" />
+            </ContextMenu.SubTrigger>
+            <ContextMenu.Portal>
+              <ContextMenu.SubContent
+                className={menuContent}
+                style={menuContentStyle}
+              >
+                {groups.map((g) => (
+                  <ContextMenu.Item
+                    key={g.id}
+                    className={menuItem}
+                    onSelect={() => api.assignProjectGroup(g.id, project.id)}
+                  >
+                    {project.groupId === g.id ? (
+                      <Check size={14} />
+                    ) : (
+                      <span className="w-[14px]" />
+                    )}
+                    <span className="truncate">{g.name}</span>
+                  </ContextMenu.Item>
+                ))}
+                {groups.length > 0 && (
+                  <ContextMenu.Separator className={menuSeparator} />
+                )}
+                {project.groupId && (
+                  <ContextMenu.Item
+                    className={menuItem}
+                    onSelect={() => api.assignProjectGroup(null, project.id)}
+                  >
+                    <FolderMinus size={14} /> Remove from group
+                  </ContextMenu.Item>
+                )}
+                <ContextMenu.Item className={menuItem} onSelect={moveToNewGroup}>
+                  <FolderPlus size={14} /> New group…
+                </ContextMenu.Item>
+              </ContextMenu.SubContent>
+            </ContextMenu.Portal>
+          </ContextMenu.Sub>
           <ContextMenu.Separator className={menuSeparator} />
           <ContextMenu.Item className={menuItem} onSelect={() => newSession("claude")}>
             <Bot size={14} /> New Claude session

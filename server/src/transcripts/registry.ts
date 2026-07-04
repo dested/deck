@@ -215,14 +215,19 @@ class TranscriptRegistry {
     const history: Session[] = [];
     for (const meta of this.index.values()) {
       if (owned.has(meta.sessionId)) continue;
-      if (this.isDismissed(meta.sessionId, meta.mtimeMs)) continue;
       const proj = this.projectFor(meta);
       if (proj.id !== projectId) continue;
       const parsed = this.getParsed(meta.sessionId);
       if (!parsed) continue;
       const s = this.toSession(meta, parsed);
-      if (now - meta.mtimeMs <= RECENT_MS) live.push(s);
-      else history.push(s);
+      // A dismissed session is gone from the LIVE view (that's what "close means
+      // close" buys), but it stays in the passive Agents *history* so it can be
+      // re-opened/adopted. Only genuinely-recent, non-dismissed sessions are live.
+      if (now - meta.mtimeMs <= RECENT_MS && !this.isDismissed(meta.sessionId, meta.mtimeMs)) {
+        live.push(s);
+      } else {
+        history.push(s);
+      }
     }
     live.sort((a, b) => b.activityAt - a.activityAt);
     history.sort((a, b) => b.activityAt - a.activityAt);

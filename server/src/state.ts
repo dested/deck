@@ -22,6 +22,11 @@ export interface DeckState {
   sessionNames: Record<string, string>;
   // sessionId -> groupId (external sessions can be grouped too)
   sessionGroups: Record<string, string | null>;
+  // Named, ordered, collapsible project groups (sidebar). Array order = display
+  // order. Separate from session `groups` above.
+  projectGroups: Group[];
+  // projectId -> groupId assignment (null == ungrouped)
+  projectGroupOf: Record<string, string | null>;
   pinnedProjects: string[];
   hiddenProjects: string[];
   ownedSessions: OwnedSessionRecord[];
@@ -43,6 +48,8 @@ const DEFAULT_STATE: DeckState = {
   groups: [],
   sessionNames: {},
   sessionGroups: {},
+  projectGroups: [],
+  projectGroupOf: {},
   pinnedProjects: [],
   hiddenProjects: [],
   ownedSessions: [],

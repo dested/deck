@@ -139,6 +139,19 @@ export const api = {
   ungroupSession: (sessionId: string) =>
     post(`/api/groups/none/assign`, { sessionId }),
 
+  // Project groups (sidebar)
+  projectGroups: () => get<Group[]>("/api/project-groups"),
+  createProjectGroup: (name: string) =>
+    post<Group>("/api/project-groups", { name }),
+  updateProjectGroup: (id: string, patch: { name?: string; collapsed?: boolean }) =>
+    req<Group>("PATCH", `/api/project-groups/${enc(id)}`, patch),
+  deleteProjectGroup: (id: string) =>
+    req<void>("DELETE", `/api/project-groups/${enc(id)}`),
+  reorderProjectGroups: (ids: string[]) =>
+    post(`/api/project-groups/reorder`, { ids }),
+  assignProjectGroup: (groupId: string | null, projectId: string) =>
+    post(`/api/project-groups/${enc(groupId ?? "none")}/assign`, { projectId }),
+
   pinProject: (id: string, pinned: boolean) =>
     post(`/api/projects/${enc(id)}/pin`, { pinned }),
   hideProject: (id: string, hidden: boolean) =>

@@ -1,9 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import { execFile } from "node:child_process";
-import type { ProjectDetail } from "@deck/shared";
+import { randomUUID } from "node:crypto";
+import type { ProjectDetail, Group } from "@deck/shared";
 import { projectRegistry } from "../projects/registry.js";
-import { updateState } from "../state.js";
+import { getState, updateState } from "../state.js";
+import { eventHub, topics } from "../ws/events.js";
 import { config } from "../config.js";
+
+// Broadcast the full project-group list on any group mutation. Clients keep a
+// small store of groups; project->group assignment rides on the project summary.
+function publishProjectGroups() {
+  eventHub.publish([topics.projects], {
+    t: "project-groups.updated",
+    payload: getState().projectGroups,
+  });
+}
 
 export async function registerProjectRoutes(app: FastifyInstance) {
   app.get("/projects", async () => projectRegistry.getAll());
@@ -76,6 +87,99 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       execFile(cmd, args, (err) => {
         if (err) console.warn("[webstorm] launch failed:", err.message);
       });
+      return { ok: true };
+    },
+  );
+
+  // ----- Project groups (sidebar) -----
+  app.get("/project-groups", async () => getState().projectGroups);
+
+  app.post<{ Body: { name: string } }>("/project-groups", async (req) => {
+    const group: Group = {
+      id: randomUUID(),
+      name: req.body.name?.trim() || "New group",
+      collapsed: false,
+    };
+    updateState((s) => {
+      s.projectGroups.push(group);
+    });
+    publishProjectGroups();
+    return group;
+  });
+
+  app.patch<{
+    Params: { id: string };
+    Body: { name?: string; collapsed?: boolean };
+  }>("/project-groups/:id", async (req, reply) => {
+    let updated: Group | undefined;
+    updateState((s) => {
+      const g = s.projectGroups.find((x) => x.id === req.params.id);
+      if (g) {
+        if (typeof req.body.name === "string") g.name = req.body.name.trim() || g.name;
+        if (typeof req.body.collapsed === "boolean") g.collapsed = req.body.collapsed;
+        updated = g;
+      }
+    });
+    if (!updated) return reply.code(404).send({ error: "group not found" });
+    publishProjectGroups();
+    return updated;
+  });
+
+  app.delete<{ Params: { id: string } }>(
+    "/project-groups/:id",
+    async (req, reply) => {
+      const affected: string[] = [];
+      updateState((s) => {
+        s.projectGroups = s.projectGroups.filter((g) => g.id !== req.params.id);
+        for (const [pid, gid] of Object.entries(s.projectGroupOf)) {
+          if (gid === req.params.id) {
+            delete s.projectGroupOf[pid];
+            affected.push(pid);
+          }
+        }
+      });
+      publishProjectGroups();
+      for (const pid of affected) projectRegistry.republish(pid);
+      return reply.code(204).send();
+    },
+  );
+
+  // Reorder groups (array order == display order).
+  app.post<{ Body: { ids: string[] } }>(
+    "/project-groups/reorder",
+    async (req) => {
+      updateState((s) => {
+        const byId = new Map(s.projectGroups.map((g) => [g.id, g]));
+        const next: Group[] = [];
+        for (const id of req.body.ids) {
+          const g = byId.get(id);
+          if (g) {
+            next.push(g);
+            byId.delete(id);
+          }
+        }
+        // Any groups not named in the payload keep their relative order at the end.
+        for (const g of s.projectGroups) if (byId.has(g.id)) next.push(g);
+        s.projectGroups = next;
+      });
+      publishProjectGroups();
+      return { ok: true };
+    },
+  );
+
+  // Assign a project to a group (id "none" -> ungroup).
+  app.post<{ Params: { id: string }; Body: { projectId: string } }>(
+    "/project-groups/:id/assign",
+    async (req, reply) => {
+      const { projectId } = req.body;
+      if (!projectRegistry.getById(projectId))
+        return reply.code(404).send({ error: "project not found" });
+      const groupId = req.params.id === "none" ? null : req.params.id;
+      updateState((s) => {
+        if (groupId === null) delete s.projectGroupOf[projectId];
+        else s.projectGroupOf[projectId] = groupId;
+      });
+      projectRegistry.republish(projectId);
       return { ok: true };
     },
   );

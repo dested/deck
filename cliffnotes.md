@@ -8,6 +8,27 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
 ---
 
+## Recent UX fixes (2026-07-04, batch 3)
+
+- **Close now MEANS close — no more re-adopt ghost.** Closing an owned claude
+  session force-closed the pty but left its transcript file on disk (fresh
+  mtime), so the transcript registry instantly re-surfaced it as an **external**
+  "Adopt" card (a *different* id = the transcript id) — you had to dismiss/adopt
+  it again. `sessionManager.forceClose` now **dismisses the linked transcript
+  first** (`dismissedSessions[transcriptId]=now`, before dropping `owned`, so
+  there's no one-tick resurrection window) and `publishRemoved(transcriptId)` to
+  retract any external card a client already drew. A killed claude never writes
+  again, so the dismiss holds; it only reappears if the transcript is genuinely
+  touched anew. Shell terminals have no transcript → always closed cleanly.
+- **Closed claudes stay re-openable from Agents *history*.** Dismissing the
+  transcript would otherwise hide it forever, so `registry.sessionsForProject`
+  no longer drops dismissed sessions — it routes recent-dismissed (and any
+  dismissed) ones to the **history** bucket instead of `live`. "Close" removes it
+  from the active/live view; history is the passive archive you re-open from.
+- **Command palette "Kill" → "Close"** (`CommandPalette.tsx`). It called bare
+  `api.killSession` (left an exited card + the transcript ghost for claudes); now
+  routes through the unified `closeSession(s)` like every other X, for any source.
+
 ## Recent UX fixes (2026-07-04, batch 2)
 
 - **Push, not just commit.** `git/service.ts push()` (auto `-u origin <branch>`
@@ -52,6 +73,40 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
   claude **transcript** in a project's folder still counts as activity, so a
   stray/short session there will float it (see `Drop FETCH_HEAD + transcript`
   option if that's unwanted). "Pin" is the star-to-top feature.
+
+## Project grouping (2026-07-04, batch 3)
+
+Named, ordered, collapsible **project groups** in the sidebar with drag-and-drop.
+
+- **State** (`state.ts`, needs server restart): `projectGroups: Group[]` (array
+  order = display order; `Group.collapsed`) + `projectGroupOf: Record<projectId,
+  groupId|null>`. Separate from session `groups`/`sessionGroups`.
+- **Decoration:** `ProjectSummary.groupId?` (optional so it degrades pre-restart)
+  set in `registry.decorate`. Server sort is unchanged (pinned → activity →
+  name); **grouping/partitioning is entirely client-side**.
+- **Broadcast:** any group mutation emits `project-groups.updated` (whole
+  `Group[]`) on the `projects` topic; project→group assignment rides the normal
+  `projects.updated` summary. New client `projectGroupsStore` (replace-whole),
+  bootstrapped in `App.tsx` via `api.projectGroups()`, updated in `ws.ts`.
+- **Routes** (`routes/projects.ts`): `GET/POST /project-groups`, `PATCH
+  /project-groups/:id` (name/collapsed), `DELETE` (unassigns its projects),
+  `POST /project-groups/reorder` {ids}, `POST /project-groups/:id/assign`
+  {projectId} (id `none` → ungroup). `api.ts`: `projectGroups`,
+  `createProjectGroup`, `updateProjectGroup`, `deleteProjectGroup`,
+  `reorderProjectGroups`, `assignProjectGroup`.
+- **Sidebar rewrite** (`Sidebar.tsx`): dropped `@tanstack/react-virtual` (≈149
+  rows render fine); renders group sections (in store order) then an "Ungrouped"
+  bucket. **Native HTML5 DnD** (no lib): drag a project onto a group header →
+  assign; onto the "Ungrouped" zone → unassign; drag a group header onto another
+  → reorder (insert-before), onto Ungrouped zone → send to end. `dragRef` holds
+  the payload; `dragKind` is mirrored to state so drop-target rings re-render.
+  Chevron toggles `collapsed` (persisted); double-click or right-click →
+  Rename/Delete; header "+" (FolderPlus) creates a group and enters inline
+  rename. **Within-group order stays activity-sorted** (pinned floats up) — no
+  manual per-project ordering, consistent with "don't reorder under the cursor".
+  Searching force-expands groups and hides empty ones.
+- **ProjectRow:** added a **Move to group** context submenu (existing groups with
+  a check on current, Remove-from-group, New group…) as a non-DnD path.
 
 ## Recent UX fixes (2026-07-04, post-M6)
 
@@ -151,7 +206,7 @@ agentcommunity/
     src/
       index.ts            fastify bootstrap: /ws/events, /ws/term, /api/*, static (prod), SPA fallback
       config.ts           config + deck.config.json overrides. repoRoot, root, port, claudeDir…
-      state.ts            ~/.deck/state.json (atomic write, 500ms debounce): groups, names, pins, owned sessions
+      state.ts            ~/.deck/state.json (atomic write, 500ms debounce): groups, projectGroups+projectGroupOf, names, pins, owned sessions
       services.ts         boot: scanner rescan + top-30 git prime + watchers + 60s rescan
       projects/
         scanner.ts        discover G:\code children with .git; activityAt (§4.1)

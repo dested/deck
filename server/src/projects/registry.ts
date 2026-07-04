@@ -32,6 +32,7 @@ class ProjectRegistry {
       ...p,
       pinned: state.pinnedProjects.includes(p.id),
       hidden: state.hiddenProjects.includes(p.id),
+      groupId: state.projectGroupOf[p.id] ?? null,
       runningSessionCount: this.runningCounts.get(p.id) ?? 0,
     };
   }
@@ -62,6 +63,7 @@ class ProjectRegistry {
           runningSessionCount: 0,
           pinned: false,
           hidden: false,
+          groupId: null,
         };
         this.map.set(s.id, summary);
         this.publish(summary);
