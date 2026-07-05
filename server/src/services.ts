@@ -6,6 +6,8 @@ import {
   openRepoWatch,
   closeRepoWatch,
 } from "./projects/watcher.js";
+import { portWatcher } from "./projects/ports.js";
+import { screenshotService } from "./projects/screenshots.js";
 import { ptyManager } from "./pty/manager.js";
 import { sessionManager } from "./sessions/manager.js";
 import { transcriptRegistry } from "./transcripts/registry.js";
@@ -34,6 +36,13 @@ export async function startServices() {
   addTranscriptChangeListener((file) => transcriptRegistry.onFileChanged(file));
 
   startWatchers();
+
+  // Live dev-server ports → Library card badges; a live port also triggers a
+  // (throttled) headless screenshot so the card gets a face.
+  portWatcher.onLive((projectId, port) =>
+    screenshotService.maybeCapture(projectId, port),
+  );
+  portWatcher.start();
 
   // Central topic-subscription lifecycle: git: -> repo watchers, transcript: ->
   // transcript live-tail subscription.
@@ -71,5 +80,6 @@ export async function startServices() {
 export function stopServices() {
   if (rescanTimer) clearInterval(rescanTimer);
   if (externalTimer) clearInterval(externalTimer);
+  portWatcher.stop();
   void stopWatchers();
 }

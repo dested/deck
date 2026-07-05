@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { WsServerMsg, TranscriptEvent } from "@deck/shared";
 import { useProjectsStore } from "../stores/projectsStore";
 import { useProjectGroupsStore } from "../stores/projectGroupsStore";
+import { useLibraryStore } from "../stores/libraryStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 import { useUIStore } from "../stores/uiStore";
 
@@ -94,6 +95,12 @@ class EventsClient {
         break;
       case "project-groups.updated":
         useProjectGroupsStore.getState().setAll(msg.payload);
+        break;
+      case "ports.updated":
+        useLibraryStore.getState().setLivePorts(msg.payload);
+        break;
+      case "screenshot.updated":
+        useLibraryStore.getState().bumpShot(msg.projectId, msg.at);
         break;
       case "sessions.updated":
         useSessionsStore.getState().upsert(msg.payload);

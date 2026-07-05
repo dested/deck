@@ -23,6 +23,9 @@ export interface SpawnOptions {
   cols?: number;
   rows?: number;
   claudeArgs?: string[];
+  // Shell kind only: run this command in the shell (kept open after it exits)
+  // — powers the Library card's one-click script launchers.
+  command?: string;
 }
 
 type DataListener = (data: string) => void;
@@ -54,7 +57,7 @@ interface PtyRecord {
 // launched from inside a Claude Code session, CLAUDE_CODE_CHILD_SESSION=1 /
 // CLAUDE_CODE_SESSION_ID would otherwise make nested claude a child that never
 // persists a transcript — breaking §5.2 linkage.
-function cleanEnv(): Record<string, string> {
+export function cleanEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -187,6 +190,12 @@ class PtyManager {
       return {
         file: config.defaultShell,
         args: ["-NoLogo", "-NoExit", "-Command", `${call} ${argStr}`.trim()],
+      };
+    }
+    if (opts.command) {
+      return {
+        file: config.defaultShell,
+        args: ["-NoLogo", "-NoExit", "-Command", opts.command],
       };
     }
     return { file: config.defaultShell, args: ["-NoLogo"] };

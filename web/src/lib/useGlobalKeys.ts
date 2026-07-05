@@ -50,12 +50,19 @@ export function useGlobalKeys() {
         ui.activateIndex(Number(e.key) - 1);
         return;
       }
-      // "/" — focus sidebar search (when not typing)
+      // "/" — focus the Library search (jumping Home first if needed)
       if (e.key === "/" && !inEditable && !mod) {
+        e.preventDefault();
         const el = document.getElementById("deck-search");
         if (el) {
-          e.preventDefault();
           (el as HTMLInputElement).focus();
+        } else {
+          ui.goHome();
+          setTimeout(() => {
+            (
+              document.getElementById("deck-search") as HTMLInputElement | null
+            )?.focus();
+          }, 0);
         }
         return;
       }

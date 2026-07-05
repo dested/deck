@@ -41,6 +41,9 @@ interface UIState {
   projectTabs: Record<string, ProjectTabState>;
   // When YOU last opened a project in Deck — drives sidebar ordering.
   lastOpenedAt: Record<string, number>;
+  // Projects currently "open" in the rail (Discord-server style). Ordered by
+  // when you opened them; closing removes from the rail only (tabs persist).
+  openProjects: string[];
 
   sidebarCollapsed: boolean;
   sidebarWidth: number;
@@ -69,6 +72,8 @@ interface UIState {
 
   goHome: () => void;
   openProject: (projectId: string, view?: ProjectViewKind) => void;
+  // Remove a project from the rail; if it was active, fall back to Home.
+  closeRailProject: (projectId: string) => void;
   openSession: (sessionId: string, projectId?: string) => void;
   closeTab: (tabId: string, projectId?: string) => void;
   closeActiveTab: () => void;
@@ -89,6 +94,7 @@ export const useUIStore = create<UIState>()(
       activeProjectId: null,
       projectTabs: {},
       lastOpenedAt: {},
+      openProjects: [],
       sidebarCollapsed: false,
       sidebarWidth: 264,
       search: "",
@@ -137,8 +143,19 @@ export const useUIStore = create<UIState>()(
               [projectId]: { ...existing, activeTabId },
             },
             lastOpenedAt: { ...st.lastOpenedAt, [projectId]: Date.now() },
+            openProjects: st.openProjects.includes(projectId)
+              ? st.openProjects
+              : [...st.openProjects, projectId],
           };
         }),
+
+      closeRailProject: (projectId) =>
+        set((st) => ({
+          openProjects: st.openProjects.filter((id) => id !== projectId),
+          ...(st.activeProjectId === projectId
+            ? { activeProjectId: null }
+            : {}),
+        })),
 
       openSession: (sessionId, projectId) => {
         const pid =
@@ -160,6 +177,9 @@ export const useUIStore = create<UIState>()(
               [pid]: { tabs, activeTabId: id },
             },
             lastOpenedAt: { ...st.lastOpenedAt, [pid]: Date.now() },
+            openProjects: st.openProjects.includes(pid)
+              ? st.openProjects
+              : [...st.openProjects, pid],
           };
         });
       },
@@ -319,6 +339,7 @@ export const useUIStore = create<UIState>()(
         activeProjectId: st.activeProjectId,
         projectTabs: st.projectTabs,
         lastOpenedAt: st.lastOpenedAt,
+        openProjects: st.openProjects,
         sidebarCollapsed: st.sidebarCollapsed,
         sidebarWidth: st.sidebarWidth,
         terminalFontSize: st.terminalFontSize,

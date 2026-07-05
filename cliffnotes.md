@@ -6,6 +6,12 @@
 
 Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
+**V2 feature spec: `SPEC2.md`** (2026-07-05, not yet built) — M7–M17: AI
+service layer + usage ledger + AI Admin, Attention Inbox, global transcript
+search + resume, root pseudo-project, review queue, AI tab titles/summaries,
+prompt recipes/enhancer/commit messages, digests, cost expansion, cliffnotes
+tab, task board. Read it alongside this file before building any of those.
+
 ---
 
 ## Restore ghost session tabs (2026-07-05)

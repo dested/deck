@@ -26,6 +26,24 @@ export async function spawnSession(
   return s;
 }
 
+// One-click package.json script launcher (Library card run buttons): spawns a
+// real shell session running `<runner> run <script>` and opens its tab.
+export async function runScript(
+  projectId: string,
+  script: string,
+  runner: "bun" | "pnpm" | "yarn" | "npm",
+) {
+  const s = await api.createSession({
+    projectId,
+    kind: "shell",
+    name: `▶ ${script}`,
+    command: `${runner} run ${script}`,
+  });
+  useSessionsStore.getState().upsert(s);
+  useUIStore.getState().openSession(s.id);
+  return s;
+}
+
 // Close a session from the UI. Optimistically drop it from the live store + any
 // open tab, then tell the server: owned sessions are killed + fully removed
 // (clears zombies too); external ones are dismissed (hidden until new activity).

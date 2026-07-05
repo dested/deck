@@ -18,6 +18,7 @@ export async function registerSessionRoutes(app: FastifyInstance) {
       name?: string;
       groupId?: string;
       claudeArgs?: string[];
+      command?: string;
     };
   }>("/sessions", async (req, reply) => {
     try {

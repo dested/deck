@@ -34,6 +34,8 @@ export interface DeckState {
   // sessionId -> dismissedAt (ms). An external session is hidden while its
   // transcript hasn't been touched since this time; new activity un-hides it.
   dismissedSessions: Record<string, number>;
+  // projectId -> AI-generated one-line description (Library card ✨ button).
+  projectBlurbs: Record<string, { text: string; at: number }>;
   prefs: {
     sidebarWidth: number;
     terminalFontSize: number;
@@ -55,6 +57,7 @@ const DEFAULT_STATE: DeckState = {
   ownedSessions: [],
   mutedSessions: [],
   dismissedSessions: {},
+  projectBlurbs: {},
   prefs: {
     sidebarWidth: 264,
     terminalFontSize: 13,

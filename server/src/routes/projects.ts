@@ -1,8 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { ProjectDetail, Group } from "@deck/shared";
+import fs from "node:fs";
+import type {
+  ProjectDetail,
+  ProjectInspection,
+  Group,
+} from "@deck/shared";
 import { projectRegistry } from "../projects/registry.js";
+import { inspectProject } from "../projects/inspector.js";
+import { portWatcher } from "../projects/ports.js";
+import { screenshotService } from "../projects/screenshots.js";
+import { ptyManager, cleanEnv } from "../pty/manager.js";
 import { getState, updateState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
 import { config } from "../config.js";
@@ -18,6 +27,108 @@ function publishProjectGroups() {
 
 export async function registerProjectRoutes(app: FastifyInstance) {
   app.get("/projects", async () => projectRegistry.getAll());
+
+  // ----- Library enrichment (inspection / live ports / screenshots) -----
+
+  // Batch: one request enriches every card. Pure fs reads, mtime-cached.
+  app.get("/projects/inspections", async () => {
+    const out: Record<string, ProjectInspection> = {};
+    for (const p of projectRegistry.getAll()) {
+      out[p.id] = inspectProject(p.id, p.path);
+    }
+    return out;
+  });
+
+  app.get("/projects/live-ports", async () => portWatcher.getLive());
+
+  // projectId -> shot mtime, for cache-busting <img> URLs on boot.
+  app.get("/projects/screenshots", async () =>
+    screenshotService.allShotTimes(),
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/inspect",
+    async (req, reply) => {
+      const p = projectRegistry.getById(req.params.id);
+      if (!p) return reply.code(404).send({ error: "project not found" });
+      return inspectProject(p.id, p.path);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/screenshot",
+    async (req, reply) => {
+      const file = screenshotService.shotPath(req.params.id);
+      let buf: Buffer;
+      try {
+        buf = fs.readFileSync(file);
+      } catch {
+        return reply.code(404).send({ error: "no screenshot" });
+      }
+      return reply
+        .type("image/png")
+        .header("cache-control", "no-cache")
+        .send(buf);
+    },
+  );
+
+  // Manual 📸 recapture. Uses the live port if known, else a supplied/static one.
+  app.post<{ Params: { id: string }; Body: { port?: number } }>(
+    "/projects/:id/screenshot",
+    async (req, reply) => {
+      const p = projectRegistry.getById(req.params.id);
+      if (!p) return reply.code(404).send({ error: "project not found" });
+      const port =
+        req.body?.port ??
+        portWatcher.getLive()[p.id]?.[0] ??
+        inspectProject(p.id, p.path).staticPorts[0];
+      if (!port)
+        return reply
+          .code(400)
+          .send({ error: "no known port — is the dev server running?" });
+      screenshotService.forceCapture(p.id, port);
+      return { ok: true, port };
+    },
+  );
+
+  // ✨ AI blurb: one-shot `claude -p` summary of the repo, persisted in state.
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/blurb",
+    async (req, reply) => {
+      const p = projectRegistry.getById(req.params.id);
+      if (!p) return reply.code(404).send({ error: "project not found" });
+      const bin = ptyManager.getClaudeBin();
+      if (!bin) return reply.code(400).send({ error: "claude binary not found" });
+      const prompt =
+        "Skim this repository (README, package.json, a key source file or two) " +
+        "and describe what it is in ONE sentence of at most 140 characters. " +
+        "Output only that sentence — no preamble, no quotes.";
+      const text = await new Promise<string | null>((resolve) => {
+        execFile(
+          "cmd",
+          ["/c", bin, "-p", prompt],
+          {
+            cwd: p.path,
+            env: cleanEnv(),
+            windowsHide: true,
+            timeout: 180_000,
+            maxBuffer: 1024 * 1024,
+          },
+          (err, stdout) => {
+            if (err) return resolve(null);
+            const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+            resolve(line?.trim() || null);
+          },
+        );
+      });
+      if (!text)
+        return reply.code(502).send({ error: "claude summary failed" });
+      updateState((s) => {
+        s.projectBlurbs[p.id] = { text, at: Date.now() };
+      });
+      return inspectProject(p.id, p.path);
+    },
+  );
 
   app.get<{ Params: { id: string } }>("/projects/:id", async (req, reply) => {
     const p = projectRegistry.getById(req.params.id);

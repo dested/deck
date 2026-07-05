@@ -18,6 +18,7 @@ export interface CreateSessionInput {
   name?: string;
   groupId?: string;
   claudeArgs?: string[];
+  command?: string; // shell kind: run this command (Library run buttons)
 }
 
 // Owns app-owned sessions (backed by PtyManager). External transcript sessions
@@ -104,6 +105,7 @@ class SessionManager {
       projectId: input.projectId,
       projectPath,
       claudeArgs: input.claudeArgs,
+      command: input.command,
     });
     this.owned.set(id, id);
 

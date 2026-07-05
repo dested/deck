@@ -31,6 +31,35 @@ export interface ProjectDetail extends ProjectSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Project inspection (Library cards) — server-side enrichment scraped from
+// README / cliffnotes / package.json, cached by file mtimes.
+// ---------------------------------------------------------------------------
+
+export interface ProjectScript {
+  name: string;
+  command: string;
+}
+
+export interface ProjectInspection {
+  projectId: string;
+  // Best one-liner we could find. Source priority: readme > package > cliffnotes > ai.
+  blurb: string | null;
+  blurbSource: "readme" | "package" | "cliffnotes" | "ai" | null;
+  readmeTitle: string | null;
+  hasReadme: boolean;
+  packageName: string | null;
+  frameworks: string[]; // detected stack badges, e.g. ["next", "electron"]
+  scripts: ProjectScript[];
+  workspaceGlobs: number; // package.json workspaces entries (0 = not a monorepo)
+  staticPorts: number[]; // ports scraped from scripts / vite config / .env
+  runner: "bun" | "pnpm" | "yarn" | "npm"; // lockfile-detected package manager
+}
+
+// Live dev-server detection: listening ports whose owning process belongs to a
+// project (matched by command line). Keyed by projectId.
+export type LivePortMap = Record<string, number[]>;
+
+// ---------------------------------------------------------------------------
 // File tree / editor
 // ---------------------------------------------------------------------------
 
@@ -317,6 +346,8 @@ export type WsServerMsg =
   | { t: "projects.updated"; payload: ProjectSummary }
   | { t: "projects.removed"; id: string }
   | { t: "project-groups.updated"; payload: Group[] }
+  | { t: "ports.updated"; payload: LivePortMap }
+  | { t: "screenshot.updated"; projectId: string; at: number }
   | { t: "sessions.updated"; payload: Session }
   | { t: "sessions.removed"; id: string }
   | { t: "git.updated"; projectId: string }

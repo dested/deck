@@ -1,6 +1,8 @@
 import type {
   ProjectSummary,
   ProjectDetail,
+  ProjectInspection,
+  LivePortMap,
   Session,
   Group,
   GitStatus,
@@ -50,6 +52,18 @@ export const api = {
 
   projects: () => get<ProjectSummary[]>("/api/projects"),
   project: (id: string) => get<ProjectDetail>(`/api/projects/${enc(id)}`),
+  inspections: () =>
+    get<Record<string, ProjectInspection>>("/api/projects/inspections"),
+  livePorts: () => get<LivePortMap>("/api/projects/live-ports"),
+  screenshotTimes: () =>
+    get<Record<string, number>>("/api/projects/screenshots"),
+  captureScreenshot: (id: string, port?: number) =>
+    post<{ ok: boolean; port: number }>(
+      `/api/projects/${enc(id)}/screenshot`,
+      port ? { port } : {},
+    ),
+  generateBlurb: (id: string) =>
+    post<ProjectInspection>(`/api/projects/${enc(id)}/blurb`),
   tree: (id: string, path = "") =>
     get<TreeNode[]>(`/api/projects/${enc(id)}/tree?path=${enc(path)}`),
   file: (id: string, path: string) =>
@@ -118,6 +132,7 @@ export const api = {
     name?: string;
     groupId?: string;
     claudeArgs?: string[];
+    command?: string;
   }) => post<Session>("/api/sessions", body),
   killSession: (id: string) => post(`/api/sessions/${enc(id)}/kill`),
   renameSession: (id: string, name: string) =>
