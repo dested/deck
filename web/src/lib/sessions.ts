@@ -19,6 +19,9 @@ export async function spawnSession(
     }
   }
   const s = await api.createSession({ projectId, kind });
+  // Seed the store immediately so its tab renders live right away (ws keeps it
+  // fresh) instead of briefly falling through to the restore view.
+  useSessionsStore.getState().upsert(s);
   useUIStore.getState().openSession(s.id);
   return s;
 }

@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { AgentStats, Session } from "@deck/shared";
 import { ptyManager, type PtyRecord, type PtyKind } from "../pty/manager.js";
 import { projectRegistry } from "../projects/registry.js";
-import { getState, updateState } from "../state.js";
+import { getState, updateState, type OwnedSessionRecord } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
 import { linkOwnedClaude } from "../transcripts/linker.js";
 import { transcriptRegistry } from "../transcripts/registry.js";
+import { saveScrollback, deleteScrollback } from "../pty/scrollback.js";
+
+const OWNED_RECORD_CAP = 300; // keep the persisted restore-index bounded
 
 const WORKING_WINDOW_MS = 20_000; // (§7.4)
 
@@ -31,6 +34,51 @@ class SessionManager {
     this.externalProvider = fn;
   }
 
+  // ----- Persisted restore-index (pty id -> transcript, survives restart) -----
+
+  private recordOwned(rec: OwnedSessionRecord) {
+    updateState((s) => {
+      s.ownedSessions = s.ownedSessions.filter((o) => o.id !== rec.id);
+      s.ownedSessions.push(rec);
+      if (s.ownedSessions.length > OWNED_RECORD_CAP) {
+        const dropped = s.ownedSessions.slice(
+          0,
+          s.ownedSessions.length - OWNED_RECORD_CAP,
+        );
+        s.ownedSessions = s.ownedSessions.slice(-OWNED_RECORD_CAP);
+        for (const d of dropped) deleteScrollback(d.id); // don't leak dumps
+      }
+    });
+  }
+
+  private setOwnedTranscript(id: string, transcriptSessionId: string) {
+    updateState((s) => {
+      const r = s.ownedSessions.find((o) => o.id === id);
+      if (r) r.transcriptSessionId = transcriptSessionId;
+    });
+  }
+
+  ownedRecord(id: string): OwnedSessionRecord | undefined {
+    return getState().ownedSessions.find((o) => o.id === id);
+  }
+
+  // Re-open a claude transcript as a fresh owned session (resume). Used both by
+  // adopt (live external) and restore (a tab whose session is long gone).
+  resumeTranscript(
+    transcriptId: string,
+    projectId: string,
+    name?: string,
+    groupId?: string,
+  ): Session {
+    return this.create({
+      projectId,
+      kind: "claude",
+      name,
+      groupId,
+      claudeArgs: ["--resume", transcriptId],
+    });
+  }
+
   create(input: CreateSessionInput): Session {
     const projectPath = projectRegistry.getPath(input.projectId);
     if (!projectPath) throw new Error("unknown project");
@@ -39,6 +87,11 @@ class SessionManager {
     const name =
       input.name ??
       `${input.projectId} ${input.kind === "shell" ? "sh" : "cc"}·${short}`;
+
+    // If resuming a known transcript, we already know its id.
+    const resumeIdx = input.claudeArgs?.indexOf("--resume") ?? -1;
+    const resumeId =
+      resumeIdx >= 0 ? input.claudeArgs?.[resumeIdx + 1] : undefined;
 
     updateState((s) => {
       s.sessionNames[id] = name;
@@ -54,12 +107,21 @@ class SessionManager {
     });
     this.owned.set(id, id);
 
+    // Persist a restore-index record so a reopened tab can map this pty id back
+    // to its transcript even after the server (and the in-memory pty) are gone.
+    this.recordOwned({
+      id,
+      kind: input.kind,
+      projectId: input.projectId,
+      projectPath,
+      name,
+      groupId: input.groupId ?? null,
+      transcriptSessionId: resumeId ?? null,
+      createdAt: Date.now(),
+    });
+
     // §5.2 link the transcript this claude session writes.
     if (input.kind === "claude") {
-      // If resuming a known transcript, we already know its id.
-      const resumeIdx = input.claudeArgs?.indexOf("--resume") ?? -1;
-      const resumeId =
-        resumeIdx >= 0 ? input.claudeArgs?.[resumeIdx + 1] : undefined;
       if (resumeId) {
         rec.transcriptSessionId = resumeId;
       } else {
@@ -67,6 +129,7 @@ class SessionManager {
           const r = ptyManager.get(id);
           if (r) {
             r.transcriptSessionId = tid;
+            this.setOwnedTranscript(id, tid);
             this.publishOwned(id);
           }
         });
@@ -78,6 +141,7 @@ class SessionManager {
       this.publishOwned(id);
     });
     ptyManager.onExit(id, () => {
+      saveScrollback(id); // freeze the last screen before the ring is swept
       this.publishOwned(id);
       this.syncRunningCounts();
     });
@@ -138,6 +202,9 @@ class SessionManager {
         s.dismissedSessions[transcriptId] = Date.now();
       });
     }
+    // Freeze the last screen (shell tabs have no transcript to fall back on) and
+    // keep the persisted restore record so the closed tab can still be reopened.
+    saveScrollback(id);
     ptyManager.dispose(id);
     this.owned.delete(id);
     this.unread.delete(id);
@@ -156,6 +223,8 @@ class SessionManager {
   rename(id: string, name: string) {
     updateState((s) => {
       s.sessionNames[id] = name;
+      const r = s.ownedSessions.find((o) => o.id === id);
+      if (r) r.name = name;
     });
     // publishById covers external sessions too, so renaming an agent live-
     // updates its card (previously only owned sessions re-published).

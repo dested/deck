@@ -49,6 +49,9 @@ interface UIState {
   notificationsEnabled: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  // Global Costs dashboard takeover (transient — not persisted). Cleared by any
+  // navigation to a project / home / session.
+  costsOpen: boolean;
   // Path the Files view should open next (set by "Open in Files" from git),
   // keyed by project id so switching projects doesn't cross wires.
   pendingFile: Record<string, string>;
@@ -60,6 +63,7 @@ interface UIState {
   setNotificationsEnabled: (b: boolean) => void;
   setPaletteOpen: (b: boolean) => void;
   setSettingsOpen: (b: boolean) => void;
+  setCostsOpen: (b: boolean) => void;
   requestFile: (projectId: string, path: string) => void;
   consumeFile: (projectId: string) => string | null;
 
@@ -92,6 +96,7 @@ export const useUIStore = create<UIState>()(
       notificationsEnabled: true,
       paletteOpen: false,
       settingsOpen: false,
+      costsOpen: false,
       pendingFile: {},
 
       setSearch: (s) => set({ search: s }),
@@ -104,6 +109,7 @@ export const useUIStore = create<UIState>()(
       setNotificationsEnabled: (b) => set({ notificationsEnabled: b }),
       setPaletteOpen: (b) => set({ paletteOpen: b }),
       setSettingsOpen: (b) => set({ settingsOpen: b }),
+      setCostsOpen: (b) => set({ costsOpen: b }),
       requestFile: (projectId, path) =>
         set((st) => ({ pendingFile: { ...st.pendingFile, [projectId]: path } })),
       consumeFile: (projectId) => {
@@ -117,7 +123,7 @@ export const useUIStore = create<UIState>()(
         return p;
       },
 
-      goHome: () => set({ activeProjectId: null }),
+      goHome: () => set({ activeProjectId: null, costsOpen: false }),
 
       openProject: (projectId, view) =>
         set((st) => {
@@ -125,6 +131,7 @@ export const useUIStore = create<UIState>()(
           const activeTabId = view ? viewTabId(view) : existing.activeTabId;
           return {
             activeProjectId: projectId,
+            costsOpen: false,
             projectTabs: {
               ...st.projectTabs,
               [projectId]: { ...existing, activeTabId },
@@ -147,6 +154,7 @@ export const useUIStore = create<UIState>()(
             : [...existing.tabs, { id, kind: "session" as const, sessionId }];
           return {
             activeProjectId: pid,
+            costsOpen: false,
             projectTabs: {
               ...st.projectTabs,
               [pid]: { tabs, activeTabId: id },

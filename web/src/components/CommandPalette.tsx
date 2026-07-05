@@ -1,6 +1,14 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Search, FolderGit2, Bot, SquareTerminal, X, Settings } from "lucide-react";
+import {
+  Search,
+  FolderGit2,
+  Bot,
+  SquareTerminal,
+  X,
+  Settings,
+  DollarSign,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
@@ -28,6 +36,12 @@ export function CommandPalette() {
   const commands = useMemo<Command[]>(() => {
     const ui = useUIStore.getState();
     const cmds: Command[] = [];
+    cmds.push({
+      id: "costs",
+      label: "Open Costs dashboard",
+      icon: <DollarSign size={15} />,
+      run: () => ui.setCostsOpen(true),
+    });
     cmds.push({
       id: "settings",
       label: "Open settings",

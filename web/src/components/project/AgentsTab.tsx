@@ -9,6 +9,7 @@ import {
   PenLine,
   Cpu,
   Clock,
+  DollarSign,
 } from "lucide-react";
 import type { Session, SessionStatus } from "@deck/shared";
 import { api } from "../../lib/api";
@@ -20,7 +21,8 @@ import {
 import { useUIStore } from "../../stores/uiStore";
 import { SessionContextMenu } from "../session/SessionContextMenu";
 import { EmptyState } from "../ui/EmptyState";
-import { relTime, dayBucket } from "../../lib/format";
+import { relTime, dayBucket, fmtUsd } from "../../lib/format";
+import { useSessionCost } from "../../lib/useCost";
 
 // §9.4 Agents tab: rich live cards (what each agent is, its model, how much it's
 // done, what it's doing right now) + a compact per-day history.
@@ -172,6 +174,7 @@ function LiveCard({ session }: { session: Session }) {
   const st = session.stats;
   const model = modelLabel(st?.model);
   const pulse = session.status === "working";
+  const cost = useSessionCost(session.transcriptSessionId ?? session.id);
 
   return (
     <SessionContextMenu session={session}>
@@ -240,6 +243,11 @@ function LiveCard({ session }: { session: Session }) {
             {st && st.edits > 0 && (
               <Chip icon={<PenLine size={11} />} title="Edits / writes">
                 {st.edits}
+              </Chip>
+            )}
+            {cost && cost.cost > 0 && (
+              <Chip icon={<DollarSign size={11} />} title="Session cost (ccusage)">
+                <span className="text-accenttext">{fmtUsd(cost.cost)}</span>
               </Chip>
             )}
             <Chip icon={<Clock size={11} />} title="Last activity">

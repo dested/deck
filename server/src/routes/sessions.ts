@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
-import type { TranscriptPage, Group } from "@deck/shared";
+import type { TranscriptPage, Group, SessionRestore } from "@deck/shared";
 import { sessionManager } from "../sessions/manager.js";
 import { transcriptRegistry } from "../transcripts/registry.js";
+import { readScrollback } from "../pty/scrollback.js";
 import { getState, updateState } from "../state.js";
 
 const PAGE = 200;
@@ -99,6 +100,52 @@ export async function registerSessionRoutes(app: FastifyInstance) {
       return sessionManager.adopt(ext.id, ext.projectId);
     },
   );
+
+  // Restore a reopened tab whose session is no longer live (server bounced,
+  // transcript aged out of the <30min live set, or it was closed). Resolves the
+  // stale id to a read-only claude feed or a captured shell scrollback.
+  app.get<{ Params: { id: string } }>(
+    "/sessions/:id/restore",
+    async (req): Promise<SessionRestore> => {
+      const { id } = req.params;
+
+      // 1. Owned tab: map pty id -> its transcript via the persisted record.
+      const owned = sessionManager.ownedRecord(id);
+      if (owned) {
+        if (owned.kind === "claude" && owned.transcriptSessionId) {
+          const session = transcriptRegistry.sessionForTranscript(
+            owned.transcriptSessionId,
+            { name: owned.name },
+          );
+          if (session) return { kind: "claude", session };
+        }
+        const scrollback = readScrollback(id);
+        if (scrollback) return { kind: "shell", scrollback, name: owned.name };
+        return { kind: "none" };
+      }
+
+      // 2. External tab: the id IS the transcript uuid.
+      const session = transcriptRegistry.sessionForTranscript(id);
+      if (session) return { kind: "claude", session };
+
+      // 3. Last resort: a captured shell scrollback keyed by this id.
+      const scrollback = readScrollback(id);
+      if (scrollback) return { kind: "shell", scrollback, name: null };
+
+      return { kind: "none" };
+    },
+  );
+
+  // Resume a transcript as a fresh owned claude session (from a restored tab).
+  app.post<{
+    Body: { transcriptId: string; projectId: string; name?: string; groupId?: string };
+  }>("/sessions/resume", async (req, reply) => {
+    const { transcriptId, projectId, name, groupId } = req.body;
+    if (!transcriptId || !projectId) {
+      return reply.code(400).send({ error: "transcriptId and projectId required" });
+    }
+    return sessionManager.resumeTranscript(transcriptId, projectId, name, groupId);
+  });
 
   // Paginated-backward transcript feed (§3.1). `before` = exclusive end index;
   // returns the PAGE events ending there. Omit for the latest page.

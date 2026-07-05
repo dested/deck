@@ -16,6 +16,24 @@ export function relTime(ts: number, now = Date.now()): string {
   return `${Math.floor(d / 365)}y`;
 }
 
+// Compact USD: "$0", "$0.42", "$12.30", "$1.2k". Cost dashboard + chips.
+export function fmtUsd(n: number): string {
+  if (!n) return "$0";
+  if (n < 0.01) return "<$0.01";
+  if (n < 100) return `$${n.toFixed(2)}`;
+  if (n < 1000) return `$${n.toFixed(0)}`;
+  if (n < 100_000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${Math.round(n / 1000)}k`;
+}
+
+// Compact token counts: "0", "934", "12.9k", "1.2M", "3.4B".
+export function fmtTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return `${(n / 1_000_000_000).toFixed(2)}B`;
+}
+
 // Split a repo-relative path into dimmed dir prefix + filename. (§6)
 export function splitPath(p: string): { dir: string; name: string } {
   const norm = p.replace(/\\/g, "/");

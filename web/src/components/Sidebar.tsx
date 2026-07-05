@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Pencil,
   Trash2,
+  DollarSign,
 } from "lucide-react";
 import type { ProjectSummary } from "@deck/shared";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
@@ -21,6 +22,8 @@ import {
 import { useUIStore } from "../stores/uiStore";
 import { ProjectRow } from "./sidebar/ProjectRow";
 import { api } from "../lib/api";
+import { useCostReport } from "../lib/useCost";
+import { fmtUsd } from "../lib/format";
 import { cn } from "../lib/cn";
 import {
   menuContent,
@@ -43,6 +46,9 @@ export function Sidebar() {
   const lastOpenedAt = useUIStore((s) => s.lastOpenedAt);
   const goHome = useUIStore((s) => s.goHome);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const costsOpen = useUIStore((s) => s.costsOpen);
+  const setCostsOpen = useUIStore((s) => s.setCostsOpen);
+  const { data: cost } = useCostReport();
 
   const [showHidden, setShowHidden] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -201,19 +207,36 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Home / overview */}
-      <div className="px-3 pb-2">
+      {/* Home / overview + Costs */}
+      <div className="flex flex-col gap-0.5 px-3 pb-2">
         <button
           onClick={goHome}
           className={cn(
             "flex h-[30px] w-full items-center gap-2 rounded-[6px] px-2 text-left text-[13px] transition-colors",
-            activeProjectId === null
+            activeProjectId === null && !costsOpen
               ? "bg-raised text-t1"
               : "text-t2 hover:bg-raised hover:text-t1",
           )}
         >
           <Home size={14} className="shrink-0 text-t3" />
           <span>Overview</span>
+        </button>
+        <button
+          onClick={() => setCostsOpen(true)}
+          className={cn(
+            "flex h-[30px] w-full items-center gap-2 rounded-[6px] px-2 text-left text-[13px] transition-colors",
+            costsOpen
+              ? "bg-raised text-t1"
+              : "text-t2 hover:bg-raised hover:text-t1",
+          )}
+        >
+          <DollarSign size={14} className="shrink-0 text-t3" />
+          <span>Costs</span>
+          {cost?.available && cost.totalCost > 0 && (
+            <span className="mono ml-auto text-[11px] tabular-nums text-t3">
+              {fmtUsd(cost.totalCost)}
+            </span>
+          )}
         </button>
       </div>
 

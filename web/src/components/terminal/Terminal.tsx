@@ -50,7 +50,8 @@ export function Terminal({
     if (!host) return;
 
     const term = new XTerm({
-      fontFamily: '"JetBrains Mono", ui-monospace, Consolas, monospace',
+      fontFamily:
+        '"JetBrains Mono", "Symbols Nerd Font Mono", ui-monospace, Consolas, monospace',
       fontSize,
       lineHeight: 1.35,
       fontWeightBold: 600,

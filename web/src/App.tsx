@@ -8,6 +8,7 @@ import { TooltipProvider } from "./components/ui/Tooltip";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectShell } from "./views/ProjectShell";
 import { HomeView } from "./views/HomeView";
+import { CostsDashboard } from "./components/cost/CostsDashboard";
 import { CommandPalette } from "./components/CommandPalette";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { useGlobalKeys } from "./lib/useGlobalKeys";
@@ -21,6 +22,7 @@ export function App() {
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const width = useUIStore((s) => s.sidebarWidth);
   const activeProjectId = useUIStore((s) => s.activeProjectId);
+  const costsOpen = useUIStore((s) => s.costsOpen);
 
   useEffect(() => {
     api.projects().then(setProjects).catch(() => {});
@@ -41,7 +43,9 @@ export function App() {
           </div>
         )}
         <div className="flex min-w-0 flex-1 flex-col">
-          {activeProjectId ? (
+          {costsOpen ? (
+            <CostsDashboard />
+          ) : activeProjectId ? (
             <ProjectShell key={activeProjectId} projectId={activeProjectId} />
           ) : (
             <HomeView />

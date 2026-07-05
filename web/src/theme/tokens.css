@@ -25,7 +25,8 @@
   --font-ui:
     "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
-    "JetBrains Mono", ui-monospace, "Cascadia Code", "Consolas", monospace;
+    "JetBrains Mono", "Symbols Nerd Font Mono", ui-monospace, "Cascadia Code",
+    "Consolas", monospace;
 
   --radius-control: 6px;
   --radius-card: 8px;
@@ -60,7 +61,8 @@
   --font-ui:
     "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
-    "JetBrains Mono", ui-monospace, "Cascadia Code", "Consolas", monospace;
+    "JetBrains Mono", "Symbols Nerd Font Mono", ui-monospace, "Cascadia Code",
+    "Consolas", monospace;
 }
 
 /* ---- Self-hosted fonts (§1: no CDN). Files in /public/fonts. ---- */
@@ -77,6 +79,18 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+}
+/* Symbols-only Nerd Font: a FALLBACK that supplies the icon glyphs (oh-my-posh,
+   Terminal-Icons, eza --icons, powerline) in the Private Use Area that stock
+   JetBrains Mono lacks. Text still renders in JetBrains Mono; this only fills
+   missing codepoints. Works under xterm's WebGL renderer (canvas fillText honors
+   the CSS font-fallback chain). */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url("/fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
 }
 
 /* ---- Base ---- */

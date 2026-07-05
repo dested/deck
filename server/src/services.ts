@@ -9,6 +9,7 @@ import {
 import { ptyManager } from "./pty/manager.js";
 import { sessionManager } from "./sessions/manager.js";
 import { transcriptRegistry } from "./transcripts/registry.js";
+import { primeCostReport } from "./cost/service.js";
 import { addTranscriptChangeListener } from "./transcripts/tailer.js";
 import { eventHub } from "./ws/events.js";
 
@@ -56,6 +57,10 @@ export async function startServices() {
 
   // External session status transitions (working->attention->idle->stale).
   externalTimer = setInterval(() => transcriptRegistry.tickExternal(), 10_000);
+
+  // Warm the cost report so the dashboard opens instantly (ccusage is slow on
+  // its first bun-x resolve). Fire-and-forget; failures degrade gracefully.
+  primeCostReport();
 
   console.log(
     `[deck] discovered ${projectRegistry.getAll().length} projects, ` +

@@ -12,6 +12,8 @@ import type {
   TreeNode,
   TranscriptPage,
   DeckClientConfig,
+  CostReport,
+  SessionRestore,
 } from "@deck/shared";
 
 async function req<T>(
@@ -124,6 +126,14 @@ export const api = {
     post(`/api/sessions/${enc(id)}/input`, { text, submit }),
   restartSession: (id: string) => post<Session>(`/api/sessions/${enc(id)}/restart`),
   adoptSession: (id: string) => post<Session>(`/api/sessions/${enc(id)}/adopt`),
+  restoreSession: (id: string) =>
+    get<SessionRestore>(`/api/sessions/${enc(id)}/restore`),
+  resumeTranscript: (body: {
+    transcriptId: string;
+    projectId: string;
+    name?: string;
+    groupId?: string;
+  }) => post<Session>(`/api/sessions/resume`, body),
   transcript: (id: string, before?: number) =>
     get<TranscriptPage>(
       `/api/sessions/${enc(id)}/transcript${before != null ? `?before=${before}` : ""}`,
@@ -160,4 +170,7 @@ export const api = {
   openInWebstorm: (id: string) => post(`/api/projects/${enc(id)}/webstorm`),
 
   dismissSession: (id: string) => post(`/api/sessions/${enc(id)}/dismiss`),
+
+  cost: (force = false) =>
+    get<CostReport>(`/api/cost${force ? "?force=1" : ""}`),
 };

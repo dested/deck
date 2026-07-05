@@ -4,23 +4,27 @@ import { Terminal } from "../components/terminal/Terminal";
 import { Feed } from "../components/feed/Feed";
 import { AdoptBanner } from "../components/session/AdoptBanner";
 import { ClaudeSessionView } from "../components/session/ClaudeSessionView";
-import { EmptyState } from "../components/ui/EmptyState";
-import { Bot } from "lucide-react";
+import { RestoredSessionView } from "../components/session/RestoredSessionView";
 
 // M3: external claude session = read-only full-width feed + Adopt banner.
 // Owned shell = full-pane terminal. Owned claude split view lands in M4.
 export function SessionView({ sessionId }: { sessionId: string }) {
   const session = useSessionsStore((s) => s.byId[sessionId]);
+  const loaded = useSessionsStore((s) => s.loaded);
 
-  if (!session) {
+  // Don't decide "gone" until the live-session list has loaded, or we'd flash
+  // the restore view for a session that's simply not fetched yet.
+  if (!session && !loaded) {
     return (
-      <EmptyState
-        icon={<Bot size={22} />}
-        title="Session not found"
-        hint="It may have been closed or hasn't loaded yet."
-      />
+      <div className="flex h-full items-center justify-center text-[13px] text-t3">
+        Loading session…
+      </div>
     );
   }
+
+  // Tab restored from a previous run whose live session is gone: reconnect it to
+  // its on-disk transcript / captured output instead of a dead "not found".
+  if (!session) return <RestoredSessionView sessionId={sessionId} />;
 
   if (session.kind === "shell" && session.source === "owned") {
     return (

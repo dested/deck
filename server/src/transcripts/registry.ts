@@ -123,6 +123,25 @@ class TranscriptRegistry {
     return { id: dirName, path: "" };
   }
 
+  // Bulk map every indexed transcript id -> Deck project id, building the
+  // encoded-path index once. Used by the cost service to join ccusage's
+  // per-session numbers onto projects WITHOUT parsing any transcript.
+  allSessionProjects(): Map<string, string> {
+    const encIndex = buildEncodedIndex(
+      projectRegistry.getAll().map((p) => p.path),
+    );
+    const out = new Map<string, string>();
+    for (const meta of this.index.values()) {
+      const dirName = path.basename(meta.dir);
+      const projectPath = matchDirToProject(dirName, encIndex);
+      const proj = projectPath
+        ? projectRegistry.getAll().find((p) => p.path === projectPath)
+        : null;
+      out.set(meta.sessionId, proj?.id ?? dirName);
+    }
+    return out;
+  }
+
   getParsed(sessionId: string): ParsedTranscript | null {
     const meta = this.index.get(sessionId);
     if (!meta) {
@@ -192,6 +211,26 @@ class TranscriptRegistry {
       title: parsed.title,
       stats: computeStats(parsed.events, parsed.model),
     };
+  }
+
+  // Build a read-only Session for ANY transcript id on disk, regardless of
+  // recency or dismissal. Used to restore a reopened tab whose live session is
+  // gone. `override` lets an owned session keep its user-given name.
+  sessionForTranscript(
+    transcriptId: string,
+    override?: { name?: string },
+  ): Session | null {
+    let meta = this.index.get(transcriptId);
+    if (!meta) {
+      this.refreshIndex();
+      meta = this.index.get(transcriptId);
+    }
+    if (!meta) return null;
+    const parsed = this.getParsed(transcriptId);
+    if (!parsed) return null;
+    const s = this.toSession(meta, parsed);
+    if (override?.name) s.name = override.name;
+    return s;
   }
 
   // Recent (<30min) external sessions — power live cards + sidebar.

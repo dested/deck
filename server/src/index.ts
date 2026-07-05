@@ -12,6 +12,7 @@ import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGitRoutes } from "./routes/git.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerCostRoutes } from "./routes/cost.js";
 import { registerTermRoutes } from "./ws/term.js";
 import { startServices, stopServices } from "./services.js";
 import { ptyManager } from "./pty/manager.js";
@@ -68,6 +69,7 @@ async function main() {
       await registerGitRoutes(api);
       await registerSessionRoutes(api);
       await registerFileRoutes(api);
+      await registerCostRoutes(api);
     },
     { prefix: "/api" },
   );

@@ -8,6 +8,51 @@ Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
 
 ---
 
+## Restore ghost session tabs (2026-07-05)
+
+Tabs persist to localStorage (`uiStore.projectTabs`) but sessions don't — they're
+re-derived on boot from `/api/sessions` (= live owned in-memory + <30min external
+transcripts). So after a server bounce / transcript aging out / a close, restored
+tabs pointed at a session no longer in the store and rendered a dead "Session not
+found". Now they **reconnect to what's on disk** instead.
+
+- **Claude tabs → read-only feed + Resume.** `GET /sessions/:id/restore` resolves
+  the stale id to a transcript: owned tab → persisted `ownedRecord(id).
+  transcriptSessionId`; external tab → the id *is* the transcript uuid. Returns a
+  read-only `Session` (`registry.sessionForTranscript`). Client `RestoredSessionView`
+  renders `Feed` + a **Resume** button → `POST /sessions/resume {transcriptId,
+  projectId,name}` = `manager.resumeTranscript` (create w/ `--resume`); the ghost
+  tab is dropped and the fresh live tab opened.
+- **Shell tabs → last screen text.** On pty exit AND `forceClose`, `saveScrollback`
+  dumps the ring/serialize snapshot to `~/.deck/scrollback/<id>.log` (raw, capped
+  256KB). `readScrollback` strips ANSI + tails last N lines. Restored shell tab
+  shows it read-only. (In-memory ring dies on server restart / 24h sweep — this is
+  the only durable copy.)
+- **`state.ownedSessions` is now actually populated** (was declared-but-dead). Written
+  in `manager.create`/`recordOwned`, transcript filled in on link (`setOwnedTranscript`),
+  name kept current on rename, capped 300 (evicted ids' scrollback deleted). This is
+  the pty-id→transcript map that survives restart. NOTE: owned-claude ghosts created
+  *before* this shipped have no record → fall through to "Nothing left to restore"
+  (their transcript is still in Agents → History). External ghosts + all new sessions
+  restore fine.
+- Guards: `SessionView` waits for `sessionsStore.loaded` before deciding a session is
+  gone; `spawnSession` upserts the created session immediately — both avoid flashing
+  the restore view for a session that's merely not-fetched-yet.
+- New files: `server/src/pty/scrollback.ts`, `web/src/components/session/RestoredSessionView.tsx`.
+  Verified in isolation (ANSI strip/tail round-trip + real transcript parse, 12/12);
+  live browser flow untested (needs prod rebuild/restart).
+
+## Terminal Nerd Font icons (2026-07-05)
+
+Stock JetBrains Mono has no Private-Use-Area glyphs, so oh-my-posh / Terminal-
+Icons / eza icons rendered as tofu (□) in xterm. Fix: added **Symbols Nerd Font
+Mono** as a *fallback* (icon glyphs only; text stays JetBrains Mono). Works under
+the WebGL renderer because xterm rasterizes via canvas `fillText`, which honors
+the CSS font-fallback chain. Files: `web/public/fonts/SymbolsNerdFontMono-
+Regular.woff2` (1.15MB, converted from the Nerd Fonts SymbolsOnly TTF via
+fonttools), `@font-face` + `--font-mono` fallback in `theme/tokens.css`, and the
+`fontFamily` stack in `components/terminal/Terminal.tsx`.
+
 ## Tab strip: quick-add / rename / reorder (2026-07-04, batch 4)
 
 Per-project tab strip (`views/ProjectShell.tsx`) got three affordances; all

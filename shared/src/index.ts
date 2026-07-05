@@ -182,6 +182,80 @@ export interface Group {
   collapsed?: boolean;
 }
 
+// Restoring a tab whose session is no longer live (server bounced / transcript
+// aged out / it was closed). Claude sessions come back as a read-only feed you
+// can Resume; shell sessions come back as their last captured screen text.
+export type SessionRestore =
+  | { kind: "claude"; session: Session }
+  | { kind: "shell"; scrollback: string; name: string | null }
+  | { kind: "none" };
+
+// ---------------------------------------------------------------------------
+// Cost / token usage (via ccusage) — full dashboard
+// ---------------------------------------------------------------------------
+
+export interface CostModelBreakdown {
+  model: string;
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+// Per-session cost, keyed by transcript uuid (== ccusage session `period`).
+export interface SessionCost {
+  sessionId: string;
+  cost: number;
+  totalTokens: number;
+  lastActivity: number | null; // epoch ms
+  models: string[];
+}
+
+// Cost rolled up per Deck project (sessions joined by transcript dir).
+export interface ProjectCost {
+  projectId: string;
+  cost: number;
+  totalTokens: number;
+  sessionCount: number;
+  byModel: CostModelBreakdown[];
+  lastActivity: number | null;
+}
+
+export interface DailyCost {
+  date: string; // YYYY-MM-DD
+  cost: number;
+  totalTokens: number;
+}
+
+// The current Claude 5-hour billing window (ccusage `blocks --active`).
+export interface ActiveBlock {
+  id: string;
+  startTime: number; // epoch ms
+  endTime: number; // epoch ms
+  costUSD: number;
+  totalTokens: number;
+  models: string[];
+  burnRate: { costPerHour: number; tokensPerMinute: number } | null;
+  projection: {
+    remainingMinutes: number;
+    totalCost: number;
+    totalTokens: number;
+  } | null;
+}
+
+export interface CostReport {
+  generatedAt: number;
+  available: boolean; // false when ccusage isn't installed / failed
+  error?: string;
+  totalCost: number;
+  totalTokens: number;
+  projects: ProjectCost[]; // sorted desc by cost
+  daily: DailyCost[]; // chronological
+  sessions: Record<string, SessionCost>; // by transcript session id
+  activeBlock: ActiveBlock | null;
+}
+
 // ---------------------------------------------------------------------------
 // Transcript events (the parsed agent feed) — §7.2
 // ---------------------------------------------------------------------------
