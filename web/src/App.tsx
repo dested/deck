@@ -14,9 +14,9 @@ import { AiAdminView } from "./views/AiAdminView";
 import { DigestView } from "./views/DigestView";
 import { BoardView } from "./views/BoardView";
 import { SystemView } from "./views/SystemView";
+import { OverviewView } from "./views/OverviewView";
 import { CommandPalette } from "./components/CommandPalette";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { InboxPanel } from "./components/inbox/InboxPanel";
 import { RecipesDialog } from "./components/recipes/RecipesDialog";
 import { Toaster } from "./components/ui/Toast";
 import { SearchDialog } from "./components/SearchDialog";
@@ -57,7 +57,9 @@ export function App() {
       <div className="flex h-full w-full overflow-hidden bg-root text-t1">
         {!collapsed && <Rail />}
         <div className="flex min-w-0 flex-1 flex-col">
-          {topView === "costs" ? (
+          {topView === "overview" ? (
+            <OverviewView />
+          ) : topView === "costs" ? (
             <CostsDashboard />
           ) : topView === "ai" ? (
             <AiAdminView />
@@ -73,7 +75,6 @@ export function App() {
             <LibraryView />
           )}
         </div>
-        <InboxPanel />
       </div>
       <CommandPalette />
       <SettingsDialog />

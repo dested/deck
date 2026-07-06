@@ -56,6 +56,7 @@ export function PreviewTab({ projectId }: { projectId: string }) {
         kind: "shell",
         name: "▶ dev",
         command: devCommand,
+        cwd: runbook?.cwd,
       })
       .catch((err) => {
         toast(`Start failed: ${(err as Error).message}`);
@@ -74,7 +75,13 @@ export function PreviewTab({ projectId }: { projectId: string }) {
     const cmd = runbook?.test?.command;
     if (!cmd) return;
     const s = await api
-      .createSession({ projectId, kind: "shell", name: `✓ ${cmd}`, command: cmd })
+      .createSession({
+        projectId,
+        kind: "shell",
+        name: `✓ ${cmd}`,
+        command: cmd,
+        cwd: runbook?.cwd,
+      })
       .catch(() => null);
     if (s) {
       useSessionsStore.getState().upsert(s);
@@ -199,7 +206,28 @@ export function PreviewTab({ projectId }: { projectId: string }) {
 
       {/* Preview surface */}
       <div className="min-h-0 flex-1 bg-root">
-        {listening && url ? (
+        {listening && url && status?.frameBlocked ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <MonitorPlay size={22} className="text-t3" />
+            <div className="text-[14px] font-medium text-t1">
+              This site refuses to be embedded
+            </div>
+            <div className="max-w-[440px] text-[13px] text-t2">
+              <span className="mono">{url}</span> sends X-Frame-Options / CSP
+              frame-ancestors headers, so the browser won&apos;t render it in an
+              iframe. That&apos;s the site&apos;s policy — most public sites
+              (google.com included) do this. Local dev servers don&apos;t.
+            </div>
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 flex h-8 items-center gap-1.5 rounded-[6px] bg-accent px-3 text-[13px] font-medium text-white"
+            >
+              <ExternalLink size={14} /> Open in browser
+            </a>
+          </div>
+        ) : listening && url ? (
           <div className="flex h-full items-stretch justify-center">
             <iframe
               key={frameKey}
@@ -232,9 +260,13 @@ export function PreviewTab({ projectId }: { projectId: string }) {
             {devCommand ? (
               <button
                 onClick={() => void startDev()}
+                title={runbook?.cwd ? `runs in ${runbook.cwd}` : undefined}
                 className="mt-1 flex h-8 items-center gap-1.5 rounded-[6px] bg-accent px-3 text-[13px] font-medium text-white"
               >
                 <Play size={14} /> {devCommand}
+                {runbook?.cwd && (
+                  <span className="font-normal opacity-75">· {runbook.cwd}</span>
+                )}
               </button>
             ) : (
               <button
@@ -268,6 +300,7 @@ function RunbookEditor({
   onSaved: () => void;
 }) {
   const [dev, setDev] = useState(runbook.dev?.command ?? "");
+  const [cwd, setCwd] = useState(runbook.cwd ?? "");
   const [port, setPort] = useState(runbook.dev?.port?.toString() ?? "");
   const [urlOverride, setUrlOverride] = useState(runbook.dev?.url ?? "");
   const [test, setTest] = useState(runbook.test?.command ?? "");
@@ -276,6 +309,7 @@ function RunbookEditor({
   // Re-seed when the runbook identity changes (e.g. after Generate).
   useEffect(() => {
     setDev(runbook.dev?.command ?? "");
+    setCwd(runbook.cwd ?? "");
     setPort(runbook.dev?.port?.toString() ?? "");
     setUrlOverride(runbook.dev?.url ?? "");
     setTest(runbook.test?.command ?? "");
@@ -284,6 +318,7 @@ function RunbookEditor({
 
   const save = async () => {
     const next: Runbook = {};
+    if (cwd.trim()) next.cwd = cwd.trim().replace(/\\/g, "/");
     if (dev.trim()) {
       next.dev = { command: dev.trim() };
       const p = Number(port);
@@ -310,6 +345,10 @@ function RunbookEditor({
       <label className="flex flex-col gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-t3">
         Dev command
         <input value={dev} onChange={(e) => setDev(e.target.value)} placeholder="bun run dev" className={cn(field, "w-56 mono")} />
+      </label>
+      <label className="flex flex-col gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-t3" title="Subdirectory of the repo the commands run in (monorepos). Empty = repo root.">
+        Directory
+        <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="apps/web" className={cn(field, "w-36 mono")} />
       </label>
       <label className="flex flex-col gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-t3">
         Port

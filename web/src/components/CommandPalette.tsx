@@ -13,6 +13,7 @@ import {
   Kanban,
   BookMarked,
   Activity,
+  Radar,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
@@ -45,6 +46,13 @@ export function CommandPalette() {
     const ui = useUIStore.getState();
     const cmds: Command[] = [];
     cmds.push({
+      id: "overview",
+      label: "Mission Control",
+      hint: "Ctrl+I",
+      icon: <Radar size={15} />,
+      run: () => ui.setTopView("overview"),
+    });
+    cmds.push({
       id: "costs",
       label: "Open Costs dashboard",
       icon: <DollarSign size={15} />,
@@ -64,7 +72,7 @@ export function CommandPalette() {
     });
     cmds.push({
       id: "board",
-      label: "Task board",
+      label: "Tasks",
       icon: <Kanban size={15} />,
       run: () => ui.setTopView("board"),
     });

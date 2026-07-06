@@ -15,6 +15,7 @@ import {
   Code2,
   MonitorPlay,
   Layers,
+  Kanban,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -44,10 +45,12 @@ import { FilesTab } from "../components/project/FilesTab";
 import { NotesTab } from "../components/project/NotesTab";
 import { PreviewTab } from "../components/project/PreviewTab";
 import { StackTab } from "../components/project/StackTab";
+import { BoardView } from "./BoardView";
 import { SessionView } from "./SessionView";
 
 const VIEW_META: Record<ProjectViewKind, { label: string; icon: LucideIcon }> = {
   agents: { label: "Agents", icon: Bot },
+  tasks: { label: "Tasks", icon: Kanban },
   notes: { label: "Notes", icon: BookOpen },
   preview: { label: "Preview", icon: MonitorPlay },
   stack: { label: "Stack", icon: Layers },
@@ -57,6 +60,7 @@ const VIEW_META: Record<ProjectViewKind, { label: string; icon: LucideIcon }> = 
 
 const NORMAL_VIEWS: ProjectViewKind[] = [
   "agents",
+  "tasks",
   "notes",
   "preview",
   "stack",
@@ -211,6 +215,9 @@ export function ProjectShell({ projectId }: { projectId: string }) {
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab?.kind === "view" && activeTab.view === "agents" && (
           <AgentsTab projectId={projectId} />
+        )}
+        {activeTab?.kind === "view" && activeTab.view === "tasks" && (
+          <BoardView projectId={projectId} />
         )}
         {activeTab?.kind === "view" && activeTab.view === "notes" && (
           <NotesTab projectId={projectId} />

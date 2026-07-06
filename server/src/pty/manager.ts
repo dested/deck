@@ -25,6 +25,9 @@ export interface SpawnOptions {
   kind: PtyKind;
   projectId: string;
   projectPath: string;
+  // Absolute working dir for the pty (defaults to projectPath) — lets runbook
+  // commands run in a monorepo subdir. Caller validates it stays in the repo.
+  cwd?: string;
   cols?: number;
   rows?: number;
   claudeArgs?: string[];
@@ -119,7 +122,7 @@ class PtyManager {
       name: "xterm-256color",
       cols,
       rows,
-      cwd: opts.projectPath,
+      cwd: opts.cwd ?? opts.projectPath,
       env: cleanEnv(),
       useConpty: true,
     });

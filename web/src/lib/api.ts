@@ -24,7 +24,6 @@ import type {
   ReviewItem,
   Recipe,
   TaskCard,
-  AutopilotConfig,
   RunbookInfo,
   RunbookStatus,
   Runbook,
@@ -153,6 +152,7 @@ export const api = {
     claudeArgs?: string[];
     command?: string;
     initialPrompt?: string;
+    cwd?: string;
   }) => post<Session>("/api/sessions", body),
   markSessionRead: (id: string) => post(`/api/sessions/${enc(id)}/read`),
   killSession: (id: string) => post(`/api/sessions/${enc(id)}/kill`),
@@ -275,22 +275,20 @@ export const api = {
     body,
   ),
 
-  // ----- M17: task board -----
+  // ----- M17v2: personal task board -----
   tasks: () => get<TaskCard[]>("/api/tasks"),
-  createTask: (body: {
-    title: string;
-    body?: string;
-    projectId: string;
-    recipeId?: string | null;
-  }) => post<TaskCard>("/api/tasks", body),
+  createTask: (body: { title: string; body?: string; projectId?: string | null }) =>
+    post<TaskCard>("/api/tasks", body),
   updateTask: (
     id: string,
-    body: Partial<Pick<TaskCard, "title" | "body" | "projectId" | "order" | "status">>,
+    body: Partial<
+      Pick<TaskCard, "title" | "body" | "projectId" | "prompt" | "order" | "status">
+    >,
   ) => patch<TaskCard>(`/api/tasks/${enc(id)}`, body),
   deleteTask: (id: string) => del<void>(`/api/tasks/${enc(id)}`),
-  startTask: (id: string) => post<TaskCard>(`/api/tasks/${enc(id)}/start`),
-  setAutopilot: (body: Partial<AutopilotConfig>) =>
-    post<AutopilotConfig>("/api/tasks/autopilot", body),
+  clearDoneTasks: () => post<{ cleared: number }>("/api/tasks/clear-done"),
+  generateTaskPrompt: (id: string) =>
+    post<TaskCard>(`/api/tasks/${enc(id)}/generate-prompt`),
 
   // ----- M18: runbook + preview -----
   runbook: (id: string) => get<RunbookInfo>(`/api/projects/${enc(id)}/runbook`),

@@ -123,6 +123,9 @@ class EventsClient {
       case "tasks.updated":
         useTasksStore.getState().upsert(msg.payload);
         break;
+      case "tasks.removed":
+        useTasksStore.getState().remove(msg.id);
+        break;
       case "digest.ready":
         toast(`Digest ready: ${msg.name}`, "info");
         break;

@@ -68,6 +68,7 @@ async function main() {
     async (api) => {
       api.get("/config", async () => ({
         root: config.root,
+        roots: config.roots,
         port: config.port,
         claudeBin: ptyManager.getClaudeBin(),
         defaultShell: config.defaultShell,

@@ -5,6 +5,10 @@ import path from "node:path";
 // deck.config.json (optional, at repo root) can override any of these.
 interface RawConfig {
   root?: string;
+  // Additional project roots scanned besides `root` (each scanned depth-1 for
+  // .git children, same as root). `root` stays the primary: it backs the
+  // `__root__` pseudo-project and its children keep bare folder names as ids.
+  roots?: string[];
   port?: number;
   claudeDir?: string;
   defaultShell?: string;
@@ -32,9 +36,27 @@ function loadRaw(): RawConfig {
 const raw = loadRaw();
 const home = os.homedir();
 
+const primaryRoot = raw.root ?? "G:\\code";
+
+// [primary, ...extras] — normalized, deduped case-insensitively (Windows).
+function resolveRoots(): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of [primaryRoot, ...(raw.roots ?? [])]) {
+    if (typeof r !== "string" || r.trim() === "") continue;
+    const norm = path.win32.resolve(r.trim());
+    const key = norm.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(norm);
+  }
+  return out;
+}
+
 export const config = {
   repoRoot,
-  root: raw.root ?? "G:\\code",
+  root: primaryRoot,
+  roots: resolveRoots(),
   port: raw.port ?? 12345,
   devPort: 12346,
   claudeDir: raw.claudeDir ?? path.join(home, ".claude"),

@@ -67,6 +67,12 @@ export const AI_FEATURES: Record<
     defaultEnabled: true,
     dailyBudgetUSD: 0.5,
   },
+  taskPrompt: {
+    label: "Task prompt drafts",
+    defaultModel: "claude-sonnet-5",
+    defaultEnabled: true,
+    dailyBudgetUSD: 0.5,
+  },
 };
 
 export const GLOBAL_DAILY_BUDGET_USD_DEFAULT = 3.0;

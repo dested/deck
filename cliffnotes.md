@@ -7,6 +7,7 @@
 Last updated: M0–M6 complete + verified (2026-07-04); **V2 M7–M17 built**
 (2026-07-05, typecheck + prod build green, live UI unverified — see V2 section).
 **V3 M18–M20 built** (2026-07-05, no spec — built direct; see V3 section).
+**Task board rewritten to M17v2** (2026-07-06, personal kanban — see its section).
 
 **V2 feature spec: `SPEC2.md`** (2026-07-05) — M7–M17: **all built** (typecheck
 + prod web build green; live UI not yet exercised). See the V2 section below.
@@ -97,12 +98,9 @@ WebStorm, excluded from Library grid.
 projects; keeps root agents-only). `components/project/NotesTab.tsx` renders
 cliffnotes.md/ui.md; Generate = visible `spawnSession(initialPrompt)` + poll.
 
-**M17 — task board.** `state.tasks` + `state.autopilot`; `tasks/service.ts`
-(create/update/delete/startTask) + `tasks/autopilot.ts` (15s drain). `routes/
-tasks.ts` (note `/tasks/autopilot` registered before `/tasks/:id`). `views/
-BoardView.tsx` (6 columns, pre-run manual + derived-from-session; native DnD;
-NewCardComposer w/ PromptToolbar; autopilot toggle). `stores/tasksStore.ts`,
-`tasks.updated` WS.
+**M17 — task board.** REWRITTEN 2026-07-06 into M17v2 (see "Task board v2"
+section below). The original hybrid board (6 columns, session linkage,
+autopilot, startTask) is gone.
 
 **Top-level view mechanism:** `uiStore.topView: "costs"|"ai"|"digest"|"board"`
 (replaced the old `costsOpen` bool) routed in `App.tsx`; Rail footer icons +
@@ -111,10 +109,9 @@ palette entries. New small primitives: `components/ui/Switch.tsx`,
 
 **V2 gotchas:** (1) server needs restart for new state shape; (2) CLI AI prompt
 via stdin (not argv); (3) FTS sentinels are PUA U+E000/E001 — keep server+client
-in sync; (4) `liveMeta`/`reviews`/`autopilot` all await `aiComplete`
-sequentially (per-feature in-flight guard drops concurrent calls); (5) stray
-`server/src/_verify.tmp.ts` is a leftover Library-feature harness (not mine;
-harmless, typechecks).
+in sync; (4) `liveMeta`/`reviews` await `aiComplete` sequentially (per-feature
+in-flight guard drops concurrent calls); (5) stray `server/src/_verify.tmp.ts`
+is a leftover Library-feature harness (not mine; harmless, typechecks).
 
 ---
 
@@ -126,17 +123,26 @@ Builds on the parallel-session Library feature (`projects/inspector.ts`,
 `projects/ports.ts` portWatcher, `screenshots.ts`).
 
 **M18 — runbook + Preview tab.** `deck.run.json` at each repo root =
-machine-readable "how to run/test" (`Runbook`: dev{command,port,url} / test /
-install / notes). `server/src/runbook/service.ts`: read/sanitize/write, detection
-fallback from inspector (dev/start script + runner + staticPorts), `probePort`
-TCP probe, AI generate (feature id `runbook`, cli backend w/ cwd, writes the
-file). Routes `routes/runbook.ts`: GET/PUT `/projects/:id/runbook`, GET
-`…/runbook/status` (effective port = file > livePorts), POST `…/runbook/generate`.
-Root project 404s. Client `components/project/PreviewTab.tsx` (new "preview"
-view tab): **iframe of the running app** (dev servers send no X-Frame-Options),
-mobile-390px frame toggle, reload/open-external, Start-dev button = visible
-shell session (`createSession{kind:"shell",command}` — same as Library run
-buttons), Test button, inline runbook editor + ✨Generate. Status poll: 3s until
+machine-readable "how to run/test" (`Runbook`: **cwd** (repo-relative subdir all
+runbook commands run in, monorepos) / dev{command,port,url} / test / install /
+notes). `server/src/runbook/service.ts`: read/sanitize/write (`sanitizeCwd`
+rejects absolute/`..`), detection fallback from inspector (dev/start script +
+runner + staticPorts), `probePort` TCP probe, AI generate (feature id `runbook`,
+cli backend w/ cwd, writes the file). **External explicit dev.url** (non-
+localhost): status does an HTTP HEAD probe instead of the local TCP probe (30s
+cache) and sets `RunbookStatus.frameBlocked` when the response carries
+X-Frame-Options / CSP frame-ancestors (google.com etc. — browser refuses the
+iframe; PreviewTab shows a "refuses to be embedded → open in browser" panel
+instead of the broken frame). Routes `routes/runbook.ts`: GET/PUT
+`/projects/:id/runbook`, GET `…/runbook/status` (effective port = file >
+livePorts), POST `…/runbook/generate`. Root project 404s. Client
+`components/project/PreviewTab.tsx` (new "preview" view tab): **iframe of the
+running app** (dev servers send no X-Frame-Options), mobile-390px frame toggle,
+reload/open-external, Start-dev button = visible shell session
+(`createSession{kind:"shell",command,cwd}` — `CreateSessionInput.cwd` is repo-
+relative, `manager.resolveCwd` guards it inside the repo then overrides the pty
+spawn cwd; same plumbing available to Library run buttons), Test button, inline
+runbook editor (incl. Directory field) + ✨Generate. Status poll: 3s until
 listening, then 15s.
 
 **M19 — System view (ports + processes + kill).** `server/src/system/service.ts`:
@@ -221,6 +227,71 @@ found". Now they **reconnect to what's on disk** instead.
 - New files: `server/src/pty/scrollback.ts`, `web/src/components/session/RestoredSessionView.tsx`.
   Verified in isolation (ANSI strip/tail round-trip + real transcript parse, 12/12);
   live browser flow untested (needs prod rebuild/restart).
+
+## Task board v2 — personal ADHD-first kanban (2026-07-06)
+
+Full rewrite of M17. The board is now a **pure personal kanban**: it can NEVER
+start a session/agent (autopilot + startTask + session linkage deleted), has
+**no due dates anywhere**, and is built for dump-first capture. Needs a server
+restart (state migration) — old cards are migrated in `state.ts migrateTask`
+(backlog→inbox, queued→next, linked→now; sessionId/recipeId/startedAt dropped).
+
+- **Columns** (`TaskStatus`): `inbox` (zero-friction brain dump) / `next`
+  (short curated list) / `now` (THE one thing — soft limit: >1 card turns the
+  header amber with a "one thing at a time" nag, never blocks) / `done` (wins;
+  cards fade at 7d client-side, auto-pruned at 30d lazily in `listTasks`).
+- **Card** (`TaskCard`): title, body (notes), `projectId: string|null`
+  (capture first, assign later), `prompt: string|null` (see below), order
+  (fractional — card-level drop inserts before target at midpoint order).
+- **AI prompt drafting** (the ONLY automation): ✨ on the expanded card →
+  `POST /tasks/:id/generate-prompt` → `tasks/service.generateTaskPrompt` reads
+  the project's `cliffnotes.md` (14KB cap) + title/body → `aiComplete` feature
+  `taskPrompt` (sonnet) → saved on the card; UI shows copy-to-clipboard +
+  editable prompt textarea. Requires an assigned project (400 otherwise);
+  503 = AI off/over budget.
+- **Server**: `tasks/service.ts` (list/create/update/delete/clearDone/
+  generateTaskPrompt; delete + prune broadcast **`tasks.removed`**),
+  `routes/tasks.ts` (`/tasks/clear-done` registered before `/tasks/:id`).
+  `tasks/autopilot.ts` DELETED; `state.autopilot` removed from DeckState.
+- **Client**: `views/BoardView.tsx` rewritten — takes an optional `projectId`
+  prop: without it it's the top-level board (Rail footer "Tasks" / palette),
+  with it it's the **per-project "Tasks" view tab** (`ProjectViewKind +=
+  "tasks"`, second tab after Agents; `ensureProjectViews` auto-adds it to old
+  projects; root stays agents-only). Scoped board filters to that project,
+  quick-capture auto-assigns it, project chips/select hidden. Capture bar =
+  one input, Enter → Inbox. Cards expand inline to edit (fields save on blur).
+  Native DnD everywhere incl. insert-before-card reordering.
+
+## Library category bands (2026-07-06)
+
+Project groups (the user-curated "categories") were rendered in `LibraryView.tsx`
+as thin uppercase section labels — visually identical to the auto-decay buckets
+(Active/Shelf/Archive), so hand-curated shelves looked no more important than
+"untouched >30d". Rewritten into **bold category bands** (client-only, no
+server/state-shape change): each group is a `CategoryBand` with a gradient
+identity avatar + initials (`projectGradient`/`projectInitials(group.name)` from
+`lib/identity.ts` — groups have no colour field, so it's derived from the name),
+a 15px name, a `N repos · N live` signal (live/attention aggregated across the
+group's projects from `selectProjectStats`), a group-colour accent rule fading
+rightward, and a **collapse chevron** that persists via
+`api.updateProjectGroup(id,{collapsed})` (broadcasts `project-groups.updated` →
+store replaces wholesale → band re-renders). Bands sit above the decay buckets;
+an "Uncategorized" divider separates them from Active/Shelf when both exist.
+Verified live in-browser (bands render per-group colour, collapse round-trips).
+
+## Multiple project roots (2026-07-06)
+
+`deck.config.json` gained `"roots": ["D:\\work", ...]` — **additional** folders
+scanned for projects besides `root` (default `G:\code`, which stays primary:
+it backs the `__root__` pseudo-project, and its children keep bare folder
+names as ids so existing pins/groups/tabs survive). `config.roots` =
+`[root, ...roots]` normalized + deduped case-insensitively. Scanner loops all
+roots; **extra-root project ids are `encodePath(fullPath)`** (stable, collision
+-free across roots; `name` stays the folder basename). Root chokidar tier
+watches every root; `locator.isRootDirName` matches any root (unclaimed
+non-git-subdir transcripts from any root land in `__root__`). `/api/config` +
+`DeckClientConfig` expose `roots`; Settings shows the list. Needs server
+restart after editing deck.config.json (config is read once at boot).
 
 ## Wide sidebar (2026-07-05)
 
@@ -458,12 +529,12 @@ Kill a stuck server: PowerShell `Get-NetTCPConnection -LocalPort 12345 -State Li
 agentcommunity/
   SPEC.md                 locked spec
   cliffnotes.md           this file
-  deck.config.json        optional overrides (root/port/claudeDir/claudeBin/defaultShell)
+  deck.config.json        optional overrides (root/roots/port/claudeDir/claudeBin/defaultShell)
   shared/src/index.ts     ALL shared types (single source of truth) — pkg @deck/shared
   server/  (Node 22 via tsx; NOT bun runtime — node-pty needs stable ConPTY)
     src/
       index.ts            fastify bootstrap: /ws/events, /ws/term, /api/*, static (prod), SPA fallback
-      config.ts           config + deck.config.json overrides. repoRoot, root, port, claudeDir…
+      config.ts           config + deck.config.json overrides. repoRoot, root, roots[], port, claudeDir…
       state.ts            ~/.deck/state.json (atomic write, 500ms debounce): groups, projectGroups+projectGroupOf, names, pins, owned sessions
       services.ts         boot: scanner rescan + top-30 git prime + watchers + 60s rescan
       projects/

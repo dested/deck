@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import type { ProjectSummary } from "@deck/shared";
 import {
   buildEncodedIndex,
+  encodePath,
   listTranscriptDirs,
   matchDirToProject,
 } from "../transcripts/locator.js";
@@ -52,26 +53,33 @@ function transcriptActivityByProject(
   return result;
 }
 
-// §4.1 — enumerate direct children of ROOT; a child with .git is a project.
+// §4.1 — enumerate direct children of every configured root; a child with .git
+// is a project. Roots beyond the first come from deck.config.json `roots`.
 export function scanProjects(): ScannedProject[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(config.root, { withFileTypes: true });
-  } catch (err) {
-    console.warn("[scanner] cannot read root", config.root, err);
-    return [];
-  }
-
-  const dirs = entries.filter(
-    (e) => e.isDirectory() || e.isSymbolicLink(),
-  );
   const candidates: { id: string; path: string; hasGit: boolean }[] = [];
-  for (const d of dirs) {
-    const full = path.win32.join(config.root, d.name);
-    // .git can be a directory (normal) or a file (worktree/submodule).
-    const hasGit = fs.existsSync(path.win32.join(full, ".git"));
-    if (hasGit) candidates.push({ id: d.name, path: full, hasGit });
-  }
+  const seenIds = new Set<string>();
+  config.roots.forEach((root, rootIdx) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch (err) {
+      console.warn("[scanner] cannot read root", root, err);
+      return;
+    }
+    for (const d of entries) {
+      if (!d.isDirectory() && !d.isSymbolicLink()) continue;
+      const full = path.win32.join(root, d.name);
+      // .git can be a directory (normal) or a file (worktree/submodule).
+      if (!fs.existsSync(path.win32.join(full, ".git"))) continue;
+      // Primary-root projects keep the bare folder name as id (state.json
+      // pins/groups and client tabs are keyed by it); extra roots use the
+      // encoded full path so the same folder name can exist under two roots.
+      const id = rootIdx === 0 ? d.name : encodePath(full);
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      candidates.push({ id, path: full, hasGit: true });
+    }
+  });
 
   const projectPaths = candidates.map((c) => c.path);
   const transcriptActivity = transcriptActivityByProject(projectPaths);
@@ -90,7 +98,8 @@ export function scanProjects(): ScannedProject[] {
     return {
       id: c.id,
       path: c.path,
-      name: c.id,
+      // Extra-root ids are encoded paths; the display name stays the folder.
+      name: path.win32.basename(c.path),
       hasGit: c.hasGit,
       activityAt,
     };

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Search, ChevronRight, ChevronDown, Eye } from "lucide-react";
-import type { ProjectSummary, Session } from "@deck/shared";
+import type { ProjectSummary, Session, Group } from "@deck/shared";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
 import { useProjectGroupsStore } from "../stores/projectGroupsStore";
 import { useLibraryStore } from "../stores/libraryStore";
@@ -12,6 +12,8 @@ import {
 import { useUIStore } from "../stores/uiStore";
 import { ProjectCard } from "../components/library/ProjectCard";
 import { SessionCard } from "../components/home/SessionCard";
+import { api } from "../lib/api";
+import { projectGradient, projectColor, projectInitials } from "../lib/identity";
 import { cn } from "../lib/cn";
 
 // §9.2 rethought — Home is the LIBRARY: a visual, browsable grid of every
@@ -142,11 +144,21 @@ export function LibraryView() {
               const items = parts.grouped.get(g.id) ?? [];
               if (items.length === 0) return null;
               return (
-                <Section key={g.id} label={g.name} count={items.length}>
+                <CategoryBand key={g.id} group={g} items={items} stats={stats}>
                   {renderGrid(items)}
-                </Section>
+                </CategoryBand>
               );
             })}
+
+            {(parts.active.length > 0 || parts.shelf.length > 0) &&
+              parts.grouped.size > 0 && (
+                <div className="-mt-1 flex items-center gap-2 px-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-t3/70">
+                    Uncategorized
+                  </span>
+                  <div className="h-px flex-1 bg-hair" />
+                </div>
+              )}
 
             {parts.active.length > 0 && (
               <Section label="Active" hint="last 7 days" count={parts.active.length}>
@@ -230,6 +242,105 @@ function Section({
       </div>
       {children}
     </div>
+  );
+}
+
+// A user-created project group, rendered as a dominant "category" band — its
+// own colour identity (gradient avatar + accent rule), a big name, live-agent
+// signal, and a collapse toggle persisted server-side. These are the shelves
+// the user hand-curated, so they outrank the auto-decay buckets below.
+function CategoryBand({
+  group,
+  items,
+  stats,
+  children,
+}: {
+  group: Group;
+  items: ProjectSummary[];
+  stats: Map<string, { running: number; attention: boolean }>;
+  children: React.ReactNode;
+}) {
+  const collapsed = group.collapsed ?? false;
+  const accent = projectColor(group.name);
+
+  // Live signal across the whole category: how many agents are running, and
+  // whether anything in here needs input.
+  let running = 0;
+  let attention = false;
+  for (const p of items) {
+    const s = stats.get(p.id);
+    if (s) {
+      running += s.running;
+      attention ||= s.attention;
+    }
+  }
+
+  const toggle = () =>
+    void api
+      .updateProjectGroup(group.id, { collapsed: !collapsed })
+      .catch(() => {});
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center gap-3">
+        <button
+          onClick={toggle}
+          className="group flex min-w-0 items-center gap-3 text-left"
+        >
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[11px] font-bold text-white/90 shadow-sm"
+            style={{ background: projectGradient(group.name) }}
+          >
+            {projectInitials(group.name)}
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-[15px] font-semibold leading-5 text-t1">
+                {group.name}
+              </span>
+              {collapsed ? (
+                <ChevronRight size={15} className="shrink-0 text-t3" />
+              ) : (
+                <ChevronDown
+                  size={15}
+                  className="shrink-0 text-t3 opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              )}
+            </span>
+            <span className="flex items-center gap-2 text-[11px] leading-4 text-t3">
+              <span className="mono">
+                {items.length} repo{items.length === 1 ? "" : "s"}
+              </span>
+              {running > 0 && (
+                <span
+                  className="mono flex items-center gap-1"
+                  style={{ color: attention ? "var(--warn)" : "var(--ok)" }}
+                >
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full",
+                      !attention && "deck-pulse",
+                    )}
+                    style={{
+                      background: attention ? "var(--warn)" : "var(--ok)",
+                    }}
+                  />
+                  {running} live
+                </span>
+              )}
+            </span>
+          </span>
+        </button>
+        {/* colour rule carries the category identity across the row */}
+        <div
+          className="ml-1 h-[2px] flex-1 rounded-full"
+          style={{
+            background: `linear-gradient(90deg, ${accent} 0%, color-mix(in srgb, ${accent} 22%, transparent) 40%, transparent 100%)`,
+          }}
+        />
+      </div>
+      {!collapsed && children}
+    </section>
   );
 }
 

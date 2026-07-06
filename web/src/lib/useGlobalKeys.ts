@@ -32,10 +32,10 @@ export function useGlobalKeys() {
         ui.toggleSidebar();
         return;
       }
-      // Ctrl+I — toggle the Attention Inbox
+      // Ctrl+I — toggle Mission Control (full-screen overview)
       if (mod && !e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        ui.setInboxOpen(!ui.inboxOpen);
+        ui.setTopView(ui.topView === "overview" ? null : "overview");
         return;
       }
       // Ctrl+Shift+F — transcript search dialog

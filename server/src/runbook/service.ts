@@ -16,10 +16,22 @@ export const RUNBOOK_FILE = "deck.run.json";
 const DEV_SCRIPT_PRIORITY = ["dev", "start", "serve", "watch"];
 const TEST_SCRIPT_PRIORITY = ["test", "typecheck", "check", "lint"];
 
+// Relative subdir only — no absolute paths, no escaping the repo.
+function sanitizeCwd(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const clean = v.trim().replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
+  if (!clean) return null;
+  if (path.win32.isAbsolute(clean) || /^[a-zA-Z]:/.test(clean)) return null;
+  if (clean.split("/").some((seg) => seg === "..")) return null;
+  return clean;
+}
+
 function sanitizeRunbook(raw: unknown): Runbook {
   const out: Runbook = {};
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
+  const cwd = sanitizeCwd(r.cwd);
+  if (cwd) out.cwd = cwd;
   const cmd = (v: unknown): string | null =>
     v && typeof v === "object" && typeof (v as { command?: unknown }).command === "string"
       ? ((v as { command: string }).command.trim() || null)
@@ -100,6 +112,51 @@ export function probePort(port: number, timeoutMs = 800): Promise<boolean> {
   });
 }
 
+function isLocalUrl(u: string): boolean {
+  try {
+    const h = new URL(u).hostname;
+    return (
+      h === "localhost" || h === "0.0.0.0" || h === "::1" || h.startsWith("127.")
+    );
+  } catch {
+    return true; // unparseable — treat as local, the TCP probe path handles it
+  }
+}
+
+// HTTP probe for EXTERNAL preview URLs (a local TCP probe says nothing about
+// them): reachability + whether the response headers forbid iframe embedding
+// (X-Frame-Options / CSP frame-ancestors — google.com et al. send these, so
+// the preview iframe renders a browser error page we can't see into).
+const urlProbeCache = new Map<
+  string,
+  { at: number; up: boolean; frameBlocked: boolean }
+>();
+
+async function probeUrl(
+  url: string,
+): Promise<{ up: boolean; frameBlocked: boolean }> {
+  const hit = urlProbeCache.get(url);
+  if (hit && Date.now() - hit.at < 30_000) return hit;
+  let up = false;
+  let frameBlocked = false;
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(4000),
+    });
+    up = true; // any HTTP response = something is serving there
+    const xfo = res.headers.get("x-frame-options");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    frameBlocked = xfo != null || /frame-ancestors/i.test(csp);
+  } catch {
+    // unreachable / timed out
+  }
+  const out = { at: Date.now(), up, frameBlocked };
+  urlProbeCache.set(url, out);
+  return out;
+}
+
 export async function runbookStatus(
   projectId: string,
   projectPath: string,
@@ -111,15 +168,28 @@ export async function runbookStatus(
   const port = runbook.dev?.port ?? livePorts[0] ?? null;
   const url =
     runbook.dev?.url ?? (port != null ? `http://localhost:${port}` : null);
+  // Explicit non-local URL: the local port probe is meaningless — probe the
+  // URL itself and report whether it can be iframed at all.
+  if (url && runbook.dev?.url && !isLocalUrl(url)) {
+    const probe = await probeUrl(url);
+    return {
+      port,
+      url,
+      listening: probe.up,
+      frameBlocked: probe.frameBlocked,
+      livePorts,
+    };
+  }
   const listening = port != null ? await probePort(port) : false;
-  return { port, url, listening, livePorts };
+  return { port, url, listening, frameBlocked: false, livePorts };
 }
 
 const GENERATE_PROMPT =
   "Inspect this repository (package.json scripts, README run instructions, " +
   "cliffnotes.md 'Run commands' section, vite/next config, .env PORT) and " +
   "produce a runbook JSON object describing how to run and test it. Shape:\n" +
-  '{"dev":{"command":"<start the dev server>","port":<number the app serves on>,' +
+  '{"cwd":"<relative subdir the commands run in, ONLY if not the repo root (monorepos)>",' +
+  '"dev":{"command":"<start the dev server>","port":<number the app serves on>,' +
   '"url":"<optional explicit URL if not just localhost:port>"},' +
   '"test":{"command":"<run tests or typecheck>"},' +
   '"install":{"command":"<install deps>"},' +

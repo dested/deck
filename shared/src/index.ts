@@ -376,6 +376,7 @@ export type WsServerMsg =
   | { t: "session.attention"; sessionId: string; reason: string }
   | { t: "reviews.updated"; payload: ReviewItem } // M11
   | { t: "tasks.updated"; payload: TaskCard } // M17
+  | { t: "tasks.removed"; id: string } // M17
   | { t: "digest.ready"; name: string } // M14
   | { t: "echo"; data: unknown };
 
@@ -399,6 +400,8 @@ export type WsTermServerMsg =
 
 export interface DeckClientConfig {
   root: string;
+  /** All scanned project roots: [root, ...deck.config.json `roots`]. */
+  roots: string[];
   port: number;
   claudeBin: string | null;
   defaultShell: string;
@@ -417,7 +420,8 @@ export type AiFeatureId =
   | "promptEnhancer"
   | "digest"
   | "runbook" // M18: generate deck.run.json from the repo
-  | "dbQuery"; // M20: natural language -> read-only SQL
+  | "dbQuery" // M20: natural language -> read-only SQL
+  | "taskPrompt"; // M17v2: draft a Claude Code prompt for a task card
 
 export type AiBackend = "claude-cli" | "api";
 
@@ -518,28 +522,24 @@ export interface Recipe {
 }
 
 // ---------------------------------------------------------------------------
-// M17 — task board
+// M17v2 — personal task board (pure kanban; NEVER launches sessions)
 // ---------------------------------------------------------------------------
 
-export type TaskStatus = "backlog" | "queued" | "done" | "linked";
+// Inbox = zero-friction brain dump. Next = short curated queue. Now = the one
+// thing being worked on (soft limit, UI nags past 1). Done = wins pile
+// (fades after 7d client-side, auto-pruned after 30d server-side).
+export type TaskStatus = "inbox" | "next" | "now" | "done";
 
 export interface TaskCard {
   id: string;
   title: string;
-  body: string;
-  projectId: string;
-  recipeId: string | null;
-  sessionId: string | null;
+  body: string; // free-form description / notes
+  projectId: string | null; // capture first, assign later
+  prompt: string | null; // AI-drafted Claude Code prompt (copy-paste, manual)
   createdAt: number;
-  startedAt: number | null;
   doneAt: number | null;
   order: number;
   status: TaskStatus;
-}
-
-export interface AutopilotConfig {
-  enabled: boolean;
-  maxRunning: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +547,9 @@ export interface AutopilotConfig {
 // ---------------------------------------------------------------------------
 
 export interface Runbook {
+  // Relative dir under the repo root that runbook commands run in (monorepos:
+  // "apps/web"). Absent/invalid = repo root.
+  cwd?: string;
   // The dev server: command to start it and where it serves. `url` wins over
   // `port` for the preview iframe; port alone implies http://localhost:<port>.
   dev?: { command: string; port?: number; url?: string };
@@ -565,7 +568,10 @@ export interface RunbookInfo {
 export interface RunbookStatus {
   port: number | null; // effective preview port (file > live-detected > static)
   url: string | null;
-  listening: boolean; // TCP probe of the effective port
+  listening: boolean; // TCP probe of the port, or HTTP probe for external URLs
+  // The URL sends X-Frame-Options / CSP frame-ancestors, so the browser will
+  // refuse to render it in the preview iframe (most public sites do this).
+  frameBlocked: boolean;
   livePorts: number[]; // portWatcher's live ports for this project
 }
 

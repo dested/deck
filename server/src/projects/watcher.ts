@@ -10,12 +10,13 @@ import {
 import { onTranscriptFileChanged } from "../transcripts/tailer.js";
 
 // ---------------------------------------------------------------------------
-// Tier 1 — root: add/remove of project folders under G:\code (depth 0)
+// Tier 1 — roots: add/remove of project folders under every configured root
+// (depth 0)
 // ---------------------------------------------------------------------------
 let rootWatcher: FSWatcher | null = null;
 
 function startRootTier() {
-  rootWatcher = chokidar.watch(config.root, {
+  rootWatcher = chokidar.watch(config.roots, {
     depth: 0,
     ignoreInitial: true,
     persistent: true,

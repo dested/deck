@@ -10,7 +10,7 @@ import {
   Sparkles,
   Newspaper,
   Kanban,
-  Bell,
+  Radar,
   SquareTerminal,
   Activity,
   GitBranch,
@@ -50,8 +50,6 @@ export function Rail() {
   const closeRailProject = useUIStore((s) => s.closeRailProject);
   const setTopView = useUIStore((s) => s.setTopView);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
-  const setInboxOpen = useUIStore((s) => s.setInboxOpen);
-  const inboxOpen = useUIStore((s) => s.inboxOpen);
   const inboxCount = useInboxCount();
 
   const stats = useMemo(() => selectProjectStats(sessions), [sessions]);
@@ -82,11 +80,11 @@ export function Rail() {
           onClick={goHome}
         />
         <NavRow
-          icon={<Bell size={16} />}
-          label="Inbox"
+          icon={<Radar size={16} />}
+          label="Mission Control"
           hint="Ctrl+I"
-          active={inboxOpen}
-          onClick={() => setInboxOpen(!inboxOpen)}
+          active={topView === "overview"}
+          onClick={() => setTopView(topView === "overview" ? null : "overview")}
           trailing={
             inboxCount > 0 ? (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--warn)] px-1 text-[9px] font-bold text-black">
@@ -135,7 +133,7 @@ export function Rail() {
       {/* Footer: top-level views as a compact icon row */}
       <div className="mt-1 flex shrink-0 items-center justify-between border-t border-hair px-3 pt-2">
         <FooterView view="system" label="System (ports + processes)" icon={<Activity size={16} />} topView={topView} onClick={setTopView} />
-        <FooterView view="board" label="Task board" icon={<Kanban size={16} />} topView={topView} onClick={setTopView} />
+        <FooterView view="board" label="Tasks" icon={<Kanban size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="digest" label="Daily digest" icon={<Newspaper size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="ai" label="AI Admin" icon={<Sparkles size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="costs" label="Costs" icon={<DollarSign size={16} />} topView={topView} onClick={setTopView} />

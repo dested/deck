@@ -38,10 +38,14 @@ export function SettingsDialog() {
           </div>
 
           <div className="flex flex-col gap-4">
-            <Field label="Root directory">
-              <span className="mono text-[12.5px] text-t2">
-                {config?.root ?? "…"}
-              </span>
+            <Field label="Root directories">
+              <div className="mono flex flex-col gap-0.5 text-[12.5px] text-t2">
+                {(config ? (config.roots ?? [config.root]) : ["…"]).map(
+                  (r) => (
+                    <span key={r}>{r}</span>
+                  ),
+                )}
+              </div>
             </Field>
             <Field label="Server port">
               <span className="mono text-[12.5px] text-t2">

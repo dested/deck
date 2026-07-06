@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { AgentStats, Session } from "@deck/shared";
 import { ptyManager, type PtyRecord, type PtyKind } from "../pty/manager.js";
 import { projectRegistry } from "../projects/registry.js";
@@ -21,6 +23,22 @@ export interface CreateSessionInput {
   claudeArgs?: string[];
   command?: string; // shell kind: run this command (Library run buttons)
   initialPrompt?: string; // M13: claude kind — first message, submitted on start
+  cwd?: string; // relative subdir of the project to run in (runbook cwd)
+}
+
+// Resolve an optional repo-relative cwd; anything absolute, escaping the repo,
+// or missing on disk falls back to the repo root rather than erroring.
+function resolveCwd(projectPath: string, cwd?: string): string | undefined {
+  if (!cwd?.trim()) return undefined;
+  const resolved = path.win32.resolve(projectPath, cwd.trim());
+  const rel = path.win32.relative(projectPath, resolved);
+  if (!rel || rel.startsWith("..") || path.win32.isAbsolute(rel)) return undefined;
+  try {
+    if (!fs.statSync(resolved).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+  return resolved;
 }
 
 // Owns app-owned sessions (backed by PtyManager). External transcript sessions
@@ -119,6 +137,7 @@ class SessionManager {
       kind: input.kind,
       projectId: input.projectId,
       projectPath,
+      cwd: resolveCwd(projectPath, input.cwd),
       claudeArgs: input.claudeArgs,
       command: input.command,
       initialPrompt: input.initialPrompt,

@@ -60,10 +60,13 @@ export function matchDirToProject(
   return null;
 }
 
-// M10: is this encoded dir name under `config.root` (root itself or a subdir)?
+// M10: is this encoded dir name under any configured root (the root itself or
+// a subdir of it)?
 export function isRootDirName(dirName: string): boolean {
-  const rootEnc = encodePath(config.root);
-  return dirName === rootEnc || dirName.startsWith(rootEnc + "-");
+  return config.roots.some((root) => {
+    const rootEnc = encodePath(root);
+    return dirName === rootEnc || dirName.startsWith(rootEnc + "-");
+  });
 }
 
 // M10: transcript dirs that belong to the ROOT pseudo-project — those matching

@@ -20,7 +20,6 @@ import { usageLedger } from "./ai/usage.js";
 import { startLiveMetaTicker, stopLiveMetaTicker } from "./ai/liveMeta.js";
 import { searchIndexer } from "./search/indexer.js";
 import { startDigestScheduler, stopDigestScheduler } from "./digest/service.js";
-import { startAutopilot, stopAutopilot } from "./tasks/autopilot.js";
 import { studioManager } from "./db/studio.js";
 
 let rescanTimer: NodeJS.Timeout | null = null;
@@ -107,9 +106,8 @@ export async function startServices() {
   // M12: AI tab titles/summaries for sessions with an open tab/feed.
   startLiveMetaTicker();
 
-  // M14: optional scheduled daily digest. M17: task-board autopilot.
+  // M14: optional scheduled daily digest.
   startDigestScheduler();
-  startAutopilot();
 
   console.log(
     `[deck] discovered ${projectRegistry.getAll().length} projects, ` +
@@ -122,7 +120,6 @@ export function stopServices() {
   if (externalTimer) clearInterval(externalTimer);
   stopLiveMetaTicker();
   stopDigestScheduler();
-  stopAutopilot();
   studioManager.disposeAll();
   portWatcher.stop();
   void stopWatchers();

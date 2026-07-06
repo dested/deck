@@ -8,8 +8,8 @@ import { menuContent, menuContentStyle } from "../ui/menuStyles";
 import { toast } from "../ui/Toast";
 import { cn } from "../../lib/cn";
 
-// M13/M17: shared prompt tools — recipe insertion + AI enhance + save-as-recipe.
-// Reused by the session Composer and the task-board card composer.
+// M13: shared prompt tools — recipe insertion + AI enhance + save-as-recipe.
+// Used by the session Composer.
 export function PromptToolbar({
   value,
   onChange,

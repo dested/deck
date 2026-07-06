@@ -7,6 +7,7 @@ import { useSessionsStore } from "./sessionsStore";
 // tabs are opened and closed freely.
 export type ProjectViewKind =
   | "agents"
+  | "tasks"
   | "notes"
   | "preview"
   | "stack"
@@ -14,8 +15,9 @@ export type ProjectViewKind =
   | "files";
 
 // Full-window takeover views (not tied to a project). Transient — cleared by any
-// navigation to a project / home / session.
-export type TopView = "costs" | "ai" | "digest" | "board" | "system";
+// navigation to a project / home / session. "overview" = Mission Control (the
+// full-screen replacement for the old Inbox slide-over, Ctrl+I).
+export type TopView = "overview" | "costs" | "ai" | "digest" | "board" | "system";
 
 export type ProjectTab =
   | { id: string; kind: "view"; view: ProjectViewKind }
@@ -28,6 +30,7 @@ interface ProjectTabState {
 
 const DEFAULT_VIEWS: ProjectViewKind[] = [
   "agents",
+  "tasks",
   "notes",
   "preview",
   "stack",
@@ -84,8 +87,6 @@ interface UIState {
   // Full-window takeover view (transient — not persisted). Cleared by any
   // navigation to a project / home / session.
   topView: TopView | null;
-  // M8: right-side Attention Inbox slide-over.
-  inboxOpen: boolean;
   // Path the Files view should open next (set by "Open in Files" from git),
   // keyed by project id so switching projects doesn't cross wires.
   pendingFile: Record<string, string>;
@@ -107,7 +108,6 @@ interface UIState {
   openSearch: (projectId?: string | null) => void;
   setSearchOpen: (b: boolean) => void;
   setTopView: (v: TopView | null) => void;
-  setInboxOpen: (b: boolean) => void;
   setFeedJump: (j: { sessionId: string; eventIdx: number } | null) => void;
   setGitFocusPath: (j: { projectId: string; path: string } | null) => void;
   setCommitStyle: (s: "terse" | "conventional" | "verbose") => void;
@@ -153,7 +153,6 @@ export const useUIStore = create<UIState>()(
       searchOpen: false,
       searchProjectId: null,
       topView: null,
-      inboxOpen: false,
       pendingFile: {},
       feedJump: null,
       gitFocusPath: null,
@@ -174,7 +173,6 @@ export const useUIStore = create<UIState>()(
         set({ searchOpen: true, searchProjectId: projectId ?? null }),
       setSearchOpen: (b) => set({ searchOpen: b }),
       setTopView: (v) => set({ topView: v }),
-      setInboxOpen: (b) => set({ inboxOpen: b }),
       setFeedJump: (j) => set({ feedJump: j }),
       setGitFocusPath: (j) => set({ gitFocusPath: j }),
       setCommitStyle: (s) => set({ commitStyle: s }),

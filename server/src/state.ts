@@ -6,7 +6,7 @@ import type {
   ReviewItem,
   Recipe,
   TaskCard,
-  AutopilotConfig,
+  TaskStatus,
 } from "@deck/shared";
 
 // M7: per-feature + global AI config overrides (defaults live in ai/models.ts).
@@ -60,9 +60,8 @@ export interface DeckState {
   recipes: Recipe[];
   // M15: spend budgets (null == unset).
   budgets: { monthlyUSD: number | null; blockUSD: number | null };
-  // M17: task board cards (cap 200) + autopilot config.
+  // M17v2: personal task-board cards (cap 200; done pruned after 30d).
   tasks: TaskCard[];
-  autopilot: AutopilotConfig;
   prefs: {
     sidebarWidth: number;
     terminalFontSize: number;
@@ -90,7 +89,6 @@ const DEFAULT_STATE: DeckState = {
   recipes: [],
   budgets: { monthlyUSD: null, blockUSD: null },
   tasks: [],
-  autopilot: { enabled: false, maxRunning: 2 },
   prefs: {
     sidebarWidth: 264,
     terminalFontSize: 13,
@@ -99,6 +97,31 @@ const DEFAULT_STATE: DeckState = {
   },
   openTabs: [],
 };
+
+// M17v2 migration: old cards had backlog/queued/linked statuses plus session
+// linkage fields. Map to the new manual columns and strip the dead fields.
+const OLD_STATUS_MAP: Record<string, TaskStatus> = {
+  backlog: "inbox",
+  queued: "next",
+  linked: "now",
+};
+
+function migrateTask(raw: TaskCard): TaskCard {
+  const t = raw as TaskCard & Record<string, unknown>;
+  const status: TaskStatus =
+    t.status === "done" ? "done" : OLD_STATUS_MAP[t.status] ?? t.status;
+  return {
+    id: t.id,
+    title: t.title,
+    body: t.body ?? "",
+    projectId: t.projectId ?? null,
+    prompt: typeof t.prompt === "string" ? t.prompt : null,
+    createdAt: t.createdAt,
+    doneAt: t.doneAt ?? null,
+    order: t.order ?? 0,
+    status,
+  };
+}
 
 let current: DeckState = structuredClone(DEFAULT_STATE);
 
@@ -116,13 +139,9 @@ export function loadState(): DeckState {
         features: { ...(parsed.aiConfig?.features ?? {}) },
       };
       current.budgets = { ...DEFAULT_STATE.budgets, ...(parsed.budgets ?? {}) };
-      current.autopilot = {
-        ...DEFAULT_STATE.autopilot,
-        ...(parsed.autopilot ?? {}),
-      };
       current.reviews = parsed.reviews ?? {};
       current.recipes = parsed.recipes ?? [];
-      current.tasks = parsed.tasks ?? [];
+      current.tasks = (parsed.tasks ?? []).map(migrateTask);
     }
   } catch (err) {
     console.warn("[state] failed to load, using defaults:", err);

@@ -354,13 +354,3 @@ body {
 .deck-rise {
   animation: deck-rise 140ms ease-out;
 }
-
-/* M17: illegal task-board drop feedback */
-@keyframes deck-shake {
-  0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-4px); }
-  40%, 80% { transform: translateX(4px); }
-}
-.deck-shake {
-  animation: deck-shake 380ms ease-in-out;
-}
