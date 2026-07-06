@@ -1,8 +1,14 @@
+import fs from "node:fs";
 import type { ProjectSummary } from "@deck/shared";
 import { scanProjects } from "./scanner.js";
 import { getStatusSummary } from "../git/service.js";
 import { getState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
+import { config } from "../config.js";
+import { unclaimedRootTranscriptDirs } from "../transcripts/locator.js";
+
+// M10: the synthetic root pseudo-project id.
+export const ROOT_PROJECT_ID = "__root__";
 
 // In-memory registry of all discovered projects. Single source of truth the
 // REST layer reads from and the WS layer pushes updates from.
@@ -11,19 +17,57 @@ class ProjectRegistry {
   private runningCounts = new Map<string, number>();
   private gitInFlight = new Set<string>();
 
+  private rootActivityCache = { at: 0, computed: 0 };
+
+  // M10: synthesize the root pseudo-project (agents + terminals only). Its
+  // activity is the newest mtime of its *unclaimed* transcript dirs.
+  private rootSummary(state = getState()): ProjectSummary {
+    const now = Date.now();
+    if (now - this.rootActivityCache.computed > 30_000) {
+      let latest = 0;
+      const realPaths = [...this.map.values()].map((p) => p.path);
+      for (const dir of unclaimedRootTranscriptDirs(realPaths)) {
+        try {
+          const m = fs.statSync(dir).mtimeMs;
+          if (m > latest) latest = m;
+        } catch {
+          /* ignore */
+        }
+      }
+      this.rootActivityCache = { at: latest, computed: now };
+    }
+    return {
+      id: ROOT_PROJECT_ID,
+      path: config.root,
+      name: "~ code",
+      activityAt: this.rootActivityCache.at,
+      branch: null,
+      dirtyCount: null,
+      aheadBehind: null,
+      runningSessionCount: this.runningCounts.get(ROOT_PROJECT_ID) ?? 0,
+      pinned: state.pinnedProjects.includes(ROOT_PROJECT_ID),
+      hidden: false,
+      groupId: null,
+      kind: "root",
+    };
+  }
+
   getAll(): ProjectSummary[] {
     const state = getState();
-    return [...this.map.values()]
+    const list = [...this.map.values()]
       .map((p) => this.decorate(p, state))
       .sort(sortProjects);
+    return [this.rootSummary(state), ...list];
   }
 
   getById(id: string): ProjectSummary | undefined {
+    if (id === ROOT_PROJECT_ID) return this.rootSummary();
     const p = this.map.get(id);
     return p ? this.decorate(p, getState()) : undefined;
   }
 
   getPath(id: string): string | undefined {
+    if (id === ROOT_PROJECT_ID) return config.root;
     return this.map.get(id)?.path;
   }
 
@@ -107,6 +151,7 @@ class ProjectRegistry {
   // Refresh git for the top-N most active projects, concurrency-limited.
   async refreshTopGit(n: number, concurrency = 8): Promise<void> {
     const ids = this.getAll()
+      .filter((p) => p.kind !== "root")
       .slice(0, n)
       .map((p) => p.id);
     await runPool(ids, concurrency, (id) => this.refreshGit(id));

@@ -1,7 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import type { Group } from "@deck/shared";
+import type {
+  Group,
+  ReviewItem,
+  Recipe,
+  TaskCard,
+  AutopilotConfig,
+} from "@deck/shared";
+
+// M7: per-feature + global AI config overrides (defaults live in ai/models.ts).
+export interface AiConfigState {
+  backend?: "claude-cli" | "api";
+  globalDailyBudgetUSD?: number;
+  features: Record<
+    string,
+    { enabled?: boolean; model?: string; dailyBudgetUSD?: number }
+  >;
+}
 
 // Persisted linkage of an app-owned claude PTY to the transcript file it wrote.
 export interface OwnedSessionRecord {
@@ -36,6 +52,17 @@ export interface DeckState {
   dismissedSessions: Record<string, number>;
   // projectId -> AI-generated one-line description (Library card ✨ button).
   projectBlurbs: Record<string, { text: string; at: number }>;
+  // M7: AI service config overrides (backend / budgets / per-feature).
+  aiConfig: AiConfigState;
+  // M11: review-queue items keyed by sessionId (cap 100 by ts).
+  reviews: Record<string, ReviewItem>;
+  // M13: saved prompt recipes.
+  recipes: Recipe[];
+  // M15: spend budgets (null == unset).
+  budgets: { monthlyUSD: number | null; blockUSD: number | null };
+  // M17: task board cards (cap 200) + autopilot config.
+  tasks: TaskCard[];
+  autopilot: AutopilotConfig;
   prefs: {
     sidebarWidth: number;
     terminalFontSize: number;
@@ -58,6 +85,12 @@ const DEFAULT_STATE: DeckState = {
   mutedSessions: [],
   dismissedSessions: {},
   projectBlurbs: {},
+  aiConfig: { features: {} },
+  reviews: {},
+  recipes: [],
+  budgets: { monthlyUSD: null, blockUSD: null },
+  tasks: [],
+  autopilot: { enabled: false, maxRunning: 2 },
   prefs: {
     sidebarWidth: 264,
     terminalFontSize: 13,
@@ -76,8 +109,20 @@ export function loadState(): DeckState {
         fs.readFileSync(config.deckStateFile, "utf8"),
       ) as Partial<DeckState>;
       current = { ...structuredClone(DEFAULT_STATE), ...parsed };
-      // ensure nested prefs object is complete
+      // ensure nested objects are complete (old state files predate these)
       current.prefs = { ...DEFAULT_STATE.prefs, ...(parsed.prefs ?? {}) };
+      current.aiConfig = {
+        ...parsed.aiConfig,
+        features: { ...(parsed.aiConfig?.features ?? {}) },
+      };
+      current.budgets = { ...DEFAULT_STATE.budgets, ...(parsed.budgets ?? {}) };
+      current.autopilot = {
+        ...DEFAULT_STATE.autopilot,
+        ...(parsed.autopilot ?? {}),
+      };
+      current.reviews = parsed.reviews ?? {};
+      current.recipes = parsed.recipes ?? [];
+      current.tasks = parsed.tasks ?? [];
     }
   } catch (err) {
     console.warn("[state] failed to load, using defaults:", err);

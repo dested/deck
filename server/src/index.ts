@@ -13,6 +13,15 @@ import { registerGitRoutes } from "./routes/git.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerCostRoutes } from "./routes/cost.js";
+import { registerAiRoutes } from "./routes/ai.js";
+import { registerRecipeRoutes } from "./routes/recipes.js";
+import { registerReviewRoutes } from "./routes/reviews.js";
+import { registerSearchRoutes } from "./routes/search.js";
+import { registerDigestRoutes } from "./routes/digest.js";
+import { registerTaskRoutes } from "./routes/tasks.js";
+import { registerSystemRoutes } from "./routes/system.js";
+import { registerRunbookRoutes } from "./routes/runbook.js";
+import { registerStackRoutes } from "./routes/stack.js";
 import { registerTermRoutes } from "./ws/term.js";
 import { startServices, stopServices } from "./services.js";
 import { ptyManager } from "./pty/manager.js";
@@ -70,6 +79,15 @@ async function main() {
       await registerSessionRoutes(api);
       await registerFileRoutes(api);
       await registerCostRoutes(api);
+      await registerAiRoutes(api);
+      await registerRecipeRoutes(api);
+      await registerReviewRoutes(api);
+      await registerSearchRoutes(api);
+      await registerDigestRoutes(api);
+      await registerTaskRoutes(api);
+      await registerSystemRoutes(api);
+      await registerRunbookRoutes(api);
+      await registerStackRoutes(api);
     },
     { prefix: "/api" },
   );

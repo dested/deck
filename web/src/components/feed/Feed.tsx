@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import type { TranscriptEvent } from "@deck/shared";
 import { api } from "../../lib/api";
 import { eventsClient, onTranscriptAppend } from "../../lib/ws";
+import { useUIStore } from "../../stores/uiStore";
 import { FeedEvent } from "./FeedEvent";
 
 const CAP_PAGES = 30; // up to ~6000 events loaded up front
@@ -22,6 +23,7 @@ export function Feed({
   const [loading, setLoading] = useState(true);
   const followingRef = useRef(true);
   const [following, setFollowing] = useState(true);
+  const [flashIndex, setFlashIndex] = useState<number | null>(null);
 
   const virtualizer = useVirtualizer({
     count: events.length,
@@ -108,6 +110,28 @@ export function Feed({
 
   const remeasure = useCallback(() => virtualizer.measure(), [virtualizer]);
 
+  // M9: jump to a specific event (from search), flash it, then clear.
+  const feedJump = useUIStore((s) => s.feedJump);
+  const setFeedJump = useUIStore((s) => s.setFeedJump);
+  useEffect(() => {
+    if (
+      !feedJump ||
+      feedJump.sessionId !== sessionId ||
+      loading ||
+      events.length === 0
+    )
+      return;
+    const idx = Math.max(0, Math.min(feedJump.eventIdx, events.length - 1));
+    followingRef.current = false;
+    setFollowing(false);
+    setFeedJump(null);
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(idx, { align: "center" });
+      setFlashIndex(idx);
+      setTimeout(() => setFlashIndex(null), 2000);
+    });
+  }, [feedJump, sessionId, loading, events.length, virtualizer, setFeedJump]);
+
   if (!transcriptId) {
     return (
       <div className="flex h-full items-center justify-center text-[13px] text-t3">
@@ -152,7 +176,19 @@ export function Feed({
                   transform: `translateY(${vi.start}px)`,
                 }}
               >
-                <FeedEvent event={ev} onResize={remeasure} />
+                <div
+                  className="rounded-[6px] transition-colors duration-500"
+                  style={
+                    vi.index === flashIndex
+                      ? {
+                          background:
+                            "color-mix(in srgb, var(--accent) 18%, transparent)",
+                        }
+                      : undefined
+                  }
+                >
+                  <FeedEvent event={ev} onResize={remeasure} />
+                </div>
               </div>
             );
           })}

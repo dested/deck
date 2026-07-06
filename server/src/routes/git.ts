@@ -1,11 +1,27 @@
 import type { FastifyInstance } from "fastify";
-import { projectRegistry } from "../projects/registry.js";
+import { projectRegistry, ROOT_PROJECT_ID } from "../projects/registry.js";
 import { eventHub, topics } from "../ws/events.js";
 import * as git from "../git/service.js";
+import { aiComplete } from "../ai/client.js";
+
+// M13: per-style system prompts for AI commit-message generation.
+const COMMIT_SYSTEMS: Record<string, string> = {
+  terse:
+    "Output a single-line commit subject, ≤60 chars, imperative, matching the " +
+    "style of the recent subjects provided. No body, no quotes.",
+  conventional:
+    "Output a Conventional Commits message: `type(scope): subject` ≤72 chars, " +
+    "then a blank line and a 1–3 bullet body only if the change is non-trivial.",
+  verbose:
+    "Output a commit subject ≤72 chars, a blank line, then a bullet-point body " +
+    "describing each meaningful change (what + why), one bullet per concern.",
+};
 
 export async function registerGitRoutes(app: FastifyInstance) {
-  // Resolve the repo path for :id or 404.
-  const repo = (id: string) => projectRegistry.getPath(id);
+  // Resolve the repo path for :id, or undefined (404). The root pseudo-project
+  // (M10) has no git — treated as not-found here so its Git tab is never wired.
+  const repo = (id: string) =>
+    id === ROOT_PROJECT_ID ? undefined : projectRegistry.getPath(id);
 
   const notify = (id: string) => {
     eventHub.publish([topics.git(id)], { t: "git.updated", projectId: id });
@@ -169,5 +185,31 @@ export async function registerGitRoutes(app: FastifyInstance) {
     const cwd = repo(req.params.id);
     if (!cwd) return reply.code(404).send({ error: "project not found" });
     return git.showFileDiff(cwd, req.query.hash, req.query.path);
+  });
+
+  // M13: AI commit-message generation (sonnet).
+  app.post<{
+    Params: { id: string };
+    Body: { style: "terse" | "conventional" | "verbose" };
+  }>("/projects/:id/git/commit-message", async (req, reply) => {
+    const cwd = repo(req.params.id);
+    if (!cwd) return reply.code(404).send({ error: "project not found" });
+    const style = req.body.style ?? "terse";
+    const system = COMMIT_SYSTEMS[style] ?? COMMIT_SYSTEMS.terse;
+    const ctx = await git.diffForAi(cwd);
+    if (ctx.empty) {
+      return reply.code(400).send({ error: "nothing staged or changed" });
+    }
+    const prompt =
+      `Recent commit subjects (match this style):\n${ctx.recentSubjects}\n\n` +
+      `Status:\n${ctx.summary}\n\nDiff:\n${ctx.diff}`;
+    const res = await aiComplete({
+      feature: "commitMessage",
+      system,
+      prompt,
+      maxTokens: 700,
+    });
+    if (!res) return reply.code(502).send({ error: "generation failed or off" });
+    return { message: res.text.trim() };
   });
 }

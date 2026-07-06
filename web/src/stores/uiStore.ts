@@ -5,7 +5,17 @@ import { useSessionsStore } from "./sessionsStore";
 // A project's functional views live in the SAME per-project tab strip as the
 // agent/terminal sessions you open. Views are permanent (non-closable); session
 // tabs are opened and closed freely.
-export type ProjectViewKind = "agents" | "git" | "files";
+export type ProjectViewKind =
+  | "agents"
+  | "notes"
+  | "preview"
+  | "stack"
+  | "git"
+  | "files";
+
+// Full-window takeover views (not tied to a project). Transient — cleared by any
+// navigation to a project / home / session.
+export type TopView = "costs" | "ai" | "digest" | "board" | "system";
 
 export type ProjectTab =
   | { id: string; kind: "view"; view: ProjectViewKind }
@@ -16,7 +26,21 @@ interface ProjectTabState {
   activeTabId: string;
 }
 
-const DEFAULT_VIEWS: ProjectViewKind[] = ["agents", "git", "files"];
+const DEFAULT_VIEWS: ProjectViewKind[] = [
+  "agents",
+  "notes",
+  "preview",
+  "stack",
+  "git",
+  "files",
+];
+// M10: the root pseudo-project has agents + terminals only.
+const ROOT_VIEWS: ProjectViewKind[] = ["agents"];
+const ROOT_PROJECT_ID = "__root__";
+
+function defaultViewsFor(projectId: string): ProjectViewKind[] {
+  return projectId === ROOT_PROJECT_ID ? ROOT_VIEWS : DEFAULT_VIEWS;
+}
 
 function viewTabId(view: ProjectViewKind) {
   return `view:${view}`;
@@ -25,8 +49,8 @@ function sessionTabId(sessionId: string) {
   return `session:${sessionId}`;
 }
 
-function initialTabState(): ProjectTabState {
-  const tabs: ProjectTab[] = DEFAULT_VIEWS.map((v) => ({
+function initialTabState(views: ProjectViewKind[] = DEFAULT_VIEWS): ProjectTabState {
+  const tabs: ProjectTab[] = views.map((v) => ({
     id: viewTabId(v),
     kind: "view",
     view: v,
@@ -52,12 +76,25 @@ interface UIState {
   notificationsEnabled: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
-  // Global Costs dashboard takeover (transient — not persisted). Cleared by any
+  // M13: recipes management dialog.
+  recipesOpen: boolean;
+  // M9: transcript search dialog (+ optional project scope).
+  searchOpen: boolean;
+  searchProjectId: string | null;
+  // Full-window takeover view (transient — not persisted). Cleared by any
   // navigation to a project / home / session.
-  costsOpen: boolean;
+  topView: TopView | null;
+  // M8: right-side Attention Inbox slide-over.
+  inboxOpen: boolean;
   // Path the Files view should open next (set by "Open in Files" from git),
   // keyed by project id so switching projects doesn't cross wires.
   pendingFile: Record<string, string>;
+  // M9: jump the feed to a specific event after load (transient).
+  feedJump: { sessionId: string; eventIdx: number } | null;
+  // M11: focus a file in the Git tab after opening it (transient).
+  gitFocusPath: { projectId: string; path: string } | null;
+  // M13: last-used AI commit-message style (persisted).
+  commitStyle: "terse" | "conventional" | "verbose";
 
   setSearch: (s: string) => void;
   toggleSidebar: () => void;
@@ -66,12 +103,22 @@ interface UIState {
   setNotificationsEnabled: (b: boolean) => void;
   setPaletteOpen: (b: boolean) => void;
   setSettingsOpen: (b: boolean) => void;
-  setCostsOpen: (b: boolean) => void;
+  setRecipesOpen: (b: boolean) => void;
+  openSearch: (projectId?: string | null) => void;
+  setSearchOpen: (b: boolean) => void;
+  setTopView: (v: TopView | null) => void;
+  setInboxOpen: (b: boolean) => void;
+  setFeedJump: (j: { sessionId: string; eventIdx: number } | null) => void;
+  setGitFocusPath: (j: { projectId: string; path: string } | null) => void;
+  setCommitStyle: (s: "terse" | "conventional" | "verbose") => void;
   requestFile: (projectId: string, path: string) => void;
   consumeFile: (projectId: string) => string | null;
 
   goHome: () => void;
   openProject: (projectId: string, view?: ProjectViewKind) => void;
+  // M16/M10: ensure a project's tab strip has exactly the given view tabs
+  // present (append missing, preserve user order + session tabs).
+  ensureProjectViews: (projectId: string, views: ProjectViewKind[]) => void;
   // Remove a project from the rail; if it was active, fall back to Home.
   closeRailProject: (projectId: string) => void;
   openSession: (sessionId: string, projectId?: string) => void;
@@ -102,8 +149,15 @@ export const useUIStore = create<UIState>()(
       notificationsEnabled: true,
       paletteOpen: false,
       settingsOpen: false,
-      costsOpen: false,
+      recipesOpen: false,
+      searchOpen: false,
+      searchProjectId: null,
+      topView: null,
+      inboxOpen: false,
       pendingFile: {},
+      feedJump: null,
+      gitFocusPath: null,
+      commitStyle: "terse",
 
       setSearch: (s) => set({ search: s }),
       toggleSidebar: () =>
@@ -115,7 +169,15 @@ export const useUIStore = create<UIState>()(
       setNotificationsEnabled: (b) => set({ notificationsEnabled: b }),
       setPaletteOpen: (b) => set({ paletteOpen: b }),
       setSettingsOpen: (b) => set({ settingsOpen: b }),
-      setCostsOpen: (b) => set({ costsOpen: b }),
+      setRecipesOpen: (b) => set({ recipesOpen: b }),
+      openSearch: (projectId) =>
+        set({ searchOpen: true, searchProjectId: projectId ?? null }),
+      setSearchOpen: (b) => set({ searchOpen: b }),
+      setTopView: (v) => set({ topView: v }),
+      setInboxOpen: (b) => set({ inboxOpen: b }),
+      setFeedJump: (j) => set({ feedJump: j }),
+      setGitFocusPath: (j) => set({ gitFocusPath: j }),
+      setCommitStyle: (s) => set({ commitStyle: s }),
       requestFile: (projectId, path) =>
         set((st) => ({ pendingFile: { ...st.pendingFile, [projectId]: path } })),
       consumeFile: (projectId) => {
@@ -129,15 +191,54 @@ export const useUIStore = create<UIState>()(
         return p;
       },
 
-      goHome: () => set({ activeProjectId: null, costsOpen: false }),
+      goHome: () => set({ activeProjectId: null, topView: null }),
+
+      ensureProjectViews: (projectId, views) =>
+        set((st) => {
+          const state = st.projectTabs[projectId];
+          if (!state) {
+            return {
+              projectTabs: {
+                ...st.projectTabs,
+                [projectId]: initialTabState(views),
+              },
+            };
+          }
+          const have = new Set(
+            state.tabs.filter((t) => t.kind === "view").map((t) => (t as { view: ProjectViewKind }).view),
+          );
+          const missing = views.filter((v) => !have.has(v));
+          if (missing.length === 0) return st;
+          // Insert missing view tabs right after the last existing view tab so
+          // they sit with the other views, ahead of any session tabs.
+          let lastViewIdx = -1;
+          state.tabs.forEach((t, i) => {
+            if (t.kind === "view") lastViewIdx = i;
+          });
+          const inserted: ProjectTab[] = missing.map((v) => ({
+            id: viewTabId(v),
+            kind: "view",
+            view: v,
+          }));
+          const tabs = [
+            ...state.tabs.slice(0, lastViewIdx + 1),
+            ...inserted,
+            ...state.tabs.slice(lastViewIdx + 1),
+          ];
+          return {
+            projectTabs: { ...st.projectTabs, [projectId]: { ...state, tabs } },
+          };
+        }),
 
       openProject: (projectId, view) =>
         set((st) => {
-          const existing = st.projectTabs[projectId] ?? initialTabState();
+          const existing =
+            st.projectTabs[projectId] ??
+            initialTabState(defaultViewsFor(projectId));
           const activeTabId = view ? viewTabId(view) : existing.activeTabId;
           return {
             activeProjectId: projectId,
-            costsOpen: false,
+            topView: null,
             projectTabs: {
               ...st.projectTabs,
               [projectId]: { ...existing, activeTabId },
@@ -164,14 +265,15 @@ export const useUIStore = create<UIState>()(
           null;
         if (!pid) return;
         set((st) => {
-          const existing = st.projectTabs[pid] ?? initialTabState();
+          const existing =
+            st.projectTabs[pid] ?? initialTabState(defaultViewsFor(pid));
           const id = sessionTabId(sessionId);
           const tabs = existing.tabs.some((t) => t.id === id)
             ? existing.tabs
             : [...existing.tabs, { id, kind: "session" as const, sessionId }];
           return {
             activeProjectId: pid,
-            costsOpen: false,
+            topView: null,
             projectTabs: {
               ...st.projectTabs,
               [pid]: { tabs, activeTabId: id },
@@ -344,6 +446,7 @@ export const useUIStore = create<UIState>()(
         sidebarWidth: st.sidebarWidth,
         terminalFontSize: st.terminalFontSize,
         notificationsEnabled: st.notificationsEnabled,
+        commitStyle: st.commitStyle,
       }),
     },
   ),

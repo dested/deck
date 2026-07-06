@@ -102,7 +102,7 @@ class PortWatcher {
   }
 }
 
-function listListeningPorts(): Promise<Map<number, number[]>> {
+export function listListeningPorts(): Promise<Map<number, number[]>> {
   return new Promise((resolve) => {
     execFile(
       "netstat",

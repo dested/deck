@@ -74,7 +74,7 @@ export function ClaudeSessionView({ session }: { session: Session }) {
                   transcriptId={session.transcriptSessionId}
                 />
               </div>
-              <Composer sessionId={session.id} />
+              <Composer sessionId={session.id} projectId={session.projectId} />
             </div>
             <div
               onMouseDown={onMouseDown}

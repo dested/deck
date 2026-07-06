@@ -104,6 +104,7 @@ export function syncGitHeartbeat() {
   if (!gitHeartbeat) return;
   const wanted = new Set<string>();
   for (const p of projectRegistry.getAll()) {
+    if (p.kind === "root") continue; // M10: root has no .git to heartbeat
     for (const f of gitFilesFor(p.path)) wanted.add(f);
   }
   for (const f of wanted) {

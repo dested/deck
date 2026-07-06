@@ -7,6 +7,7 @@ import { eventHub, topics } from "../ws/events.js";
 import { linkOwnedClaude } from "../transcripts/linker.js";
 import { transcriptRegistry } from "../transcripts/registry.js";
 import { saveScrollback, deleteScrollback } from "../pty/scrollback.js";
+import { reviewService } from "../reviews/service.js";
 
 const OWNED_RECORD_CAP = 300; // keep the persisted restore-index bounded
 
@@ -19,6 +20,7 @@ export interface CreateSessionInput {
   groupId?: string;
   claudeArgs?: string[];
   command?: string; // shell kind: run this command (Library run buttons)
+  initialPrompt?: string; // M13: claude kind — first message, submitted on start
 }
 
 // Owns app-owned sessions (backed by PtyManager). External transcript sessions
@@ -28,8 +30,21 @@ class SessionManager {
   private owned = new Map<string, string>();
   private unread = new Set<string>();
   private lastKey = new Map<string, string>();
+  // M12: AI tab title/summary per owned session id, folded into toSession.
+  private aiMeta = new Map<string, { title: string; summary: string; at: number }>();
+  // M8: last prompt-tail lines for an owned claude session that's `attention`.
+  private promptTails = new Map<string, string[]>();
+  // M11: prior status per owned session, to detect working → settled transitions.
+  private priorStatus = new Map<string, Session["status"]>();
   // provider for external sessions, installed by M3
   private externalProvider: (() => Session[]) | null = null;
+
+  // M12: set/clear the AI-generated tab meta for an owned session.
+  setAiMeta(id: string, meta: { title: string; summary: string; at: number }) {
+    if (!this.owned.has(id)) return;
+    this.aiMeta.set(id, meta);
+    this.publishOwned(id);
+  }
 
   setExternalProvider(fn: () => Session[]) {
     this.externalProvider = fn;
@@ -106,6 +121,7 @@ class SessionManager {
       projectPath,
       claudeArgs: input.claudeArgs,
       command: input.command,
+      initialPrompt: input.initialPrompt,
     });
     this.owned.set(id, id);
 
@@ -353,6 +369,9 @@ class SessionManager {
       unread: this.unread.has(rec.id),
       title,
       stats,
+      promptTail:
+        status === "attention" ? this.promptTails.get(rec.id) ?? null : null,
+      aiMeta: this.aiMeta.get(rec.id) ?? null,
     };
   }
 
@@ -369,7 +388,7 @@ class SessionManager {
     const rec = ptyManager.get(id);
     if (!rec) return;
     const session = this.toSession(rec);
-    const key = `${session.status}|${session.name}|${session.groupId}|${session.unread}|${session.exitCode}|${session.activityAt}|${session.lastActivityLine}`;
+    const key = `${session.status}|${session.name}|${session.groupId}|${session.unread}|${session.exitCode}|${session.activityAt}|${session.lastActivityLine}|${session.aiMeta?.at ?? 0}|${(session.promptTail ?? []).join("")}`;
     if (this.lastKey.get(id) === key) return;
     this.lastKey.set(id, key);
     this.publish(session);
@@ -390,12 +409,67 @@ class SessionManager {
     projectRegistry.setRunningCounts(ptyManager.runningCountByProject());
   }
 
+  // M8: when an owned claude session is waiting on a prompt (`attention`),
+  // capture the last ~12 readable lines of its terminal for the Inbox card.
+  private refreshPromptTail(id: string) {
+    const rec = ptyManager.get(id);
+    if (!rec || rec.kind !== "claude" || rec.status === "exited") {
+      this.promptTails.delete(id);
+      return;
+    }
+    if (this.toSession(rec).status !== "attention") {
+      this.promptTails.delete(id);
+      return;
+    }
+    const tail = extractPromptTail(ptyManager.tail(id, 4096));
+    if (tail.length) this.promptTails.set(id, tail);
+    else this.promptTails.delete(id);
+  }
+
+  // M11: detect an owned claude burst finishing (working → idle|attention) and
+  // hand it to the review service to capture touched files + a summary.
+  private checkReviewTransition(id: string) {
+    const rec = ptyManager.get(id);
+    if (!rec || rec.kind !== "claude" || rec.status === "exited") return;
+    const session = this.toSession(rec);
+    const prior = this.priorStatus.get(id);
+    this.priorStatus.set(id, session.status);
+    if (
+      prior === "working" &&
+      (session.status === "idle" || session.status === "attention")
+    ) {
+      reviewService.onSessionSettled(session);
+    }
+  }
+
   // Recompute statuses on a timer so working->idle transitions propagate (§7.4).
   startStatusTicker() {
     setInterval(() => {
-      for (const id of this.owned.keys()) this.publishOwned(id);
+      for (const id of this.owned.keys()) {
+        this.refreshPromptTail(id);
+        this.publishOwned(id);
+        this.checkReviewTransition(id);
+      }
     }, 5_000).unref?.();
   }
+}
+
+// Strip ANSI + control noise and keep the last readable lines of a terminal
+// tail (drops empties and pure box-drawing separators). No new dep.
+const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
+function extractPromptTail(raw: string): string[] {
+  const clean = raw.replace(ANSI_RE, "");
+  const lines = clean
+    .split(/\r?\n/)
+    // strip remaining control chars, keep printable + box drawing
+    .map((l) => l.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").replace(/\s+$/, ""));
+  const kept = lines.filter((l) => {
+    const t = l.trim();
+    if (!t) return false;
+    if (/^[─-╿\s]+$/.test(t)) return false; // box-drawing-only
+    return true;
+  });
+  return kept.slice(-12);
 }
 
 export const sessionManager = new SessionManager();

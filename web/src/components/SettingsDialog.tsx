@@ -12,6 +12,7 @@ export function SettingsDialog() {
   const setFontSize = useUIStore((s) => s.setTerminalFontSize);
   const notif = useUIStore((s) => s.notificationsEnabled);
   const setNotif = useUIStore((s) => s.setNotificationsEnabled);
+  const setRecipesOpen = useUIStore((s) => s.setRecipesOpen);
 
   const { data: config } = useQuery({
     queryKey: ["config"],
@@ -84,6 +85,17 @@ export function SettingsDialog() {
                   className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
                   style={{ left: notif ? 18 : 2 }}
                 />
+              </button>
+            </Field>
+            <Field label="Prompt recipes">
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  setRecipesOpen(true);
+                }}
+                className="h-7 rounded-[6px] border border-hair bg-raised px-2.5 text-[12px] text-t2 hover:bg-overlay hover:text-t1"
+              >
+                Manage recipes
               </button>
             </Field>
           </div>

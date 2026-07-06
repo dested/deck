@@ -65,6 +65,7 @@ export function LibraryView() {
     const archive: ProjectSummary[] = [];
     const now = Date.now();
     for (const p of list) {
+      if (p.kind === "root") continue; // has its own fixed Rail entry (M10)
       if (p.pinned) {
         pinned.push(p);
       } else if (p.groupId && gset.has(p.groupId)) {

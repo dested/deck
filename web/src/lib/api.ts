@@ -16,6 +16,23 @@ import type {
   DeckClientConfig,
   CostReport,
   SessionRestore,
+  AiUsageReport,
+  AiConfigView,
+  AiResult,
+  AiFeatureId,
+  SearchHit,
+  ReviewItem,
+  Recipe,
+  TaskCard,
+  AutopilotConfig,
+  RunbookInfo,
+  RunbookStatus,
+  Runbook,
+  SystemOverview,
+  StackReport,
+  DbOverview,
+  DbQueryResult,
+  StudioStatus,
 } from "@deck/shared";
 
 async function req<T>(
@@ -44,6 +61,8 @@ async function req<T>(
 const get = <T>(u: string) => req<T>("GET", u);
 const post = <T>(u: string, b?: unknown) => req<T>("POST", u, b ?? {});
 const put = <T>(u: string, b?: unknown) => req<T>("PUT", u, b ?? {});
+const patch = <T>(u: string, b?: unknown) => req<T>("PATCH", u, b ?? {});
+const del = <T>(u: string) => req<T>("DELETE", u);
 
 const enc = encodeURIComponent;
 
@@ -133,7 +152,9 @@ export const api = {
     groupId?: string;
     claudeArgs?: string[];
     command?: string;
+    initialPrompt?: string;
   }) => post<Session>("/api/sessions", body),
+  markSessionRead: (id: string) => post(`/api/sessions/${enc(id)}/read`),
   killSession: (id: string) => post(`/api/sessions/${enc(id)}/kill`),
   renameSession: (id: string, name: string) =>
     post(`/api/sessions/${enc(id)}/rename`, { name }),
@@ -188,4 +209,121 @@ export const api = {
 
   cost: (force = false) =>
     get<CostReport>(`/api/cost${force ? "?force=1" : ""}`),
+
+  // ----- M7: AI service / admin -----
+  aiUsage: (days = 30) => get<AiUsageReport>(`/api/ai/usage?days=${days}`),
+  aiConfig: () => get<AiConfigView>("/api/ai/config"),
+  patchAiConfig: (body: {
+    backend?: "claude-cli" | "api";
+    globalDailyBudgetUSD?: number;
+    feature?: AiFeatureId;
+    enabled?: boolean;
+    model?: string;
+    dailyBudgetUSD?: number;
+  }) => patch<AiConfigView>("/api/ai/config", body),
+  aiTest: () => post<AiResult>("/api/ai/test"),
+
+  // ----- M13: prompt enhancer + commit message -----
+  aiEnhance: (prompt: string, projectId?: string) =>
+    post<{ prompt: string }>("/api/ai/enhance", { prompt, projectId }),
+  gitCommitMessage: (id: string, style: "terse" | "conventional" | "verbose") =>
+    post<{ message: string }>(
+      `/api/projects/${enc(id)}/git/commit-message`,
+      { style },
+    ),
+
+  // ----- M13: recipes -----
+  recipes: () => get<Recipe[]>("/api/recipes"),
+  createRecipe: (body: { name: string; body: string; tags?: string[] }) =>
+    post<Recipe>("/api/recipes", body),
+  updateRecipe: (
+    id: string,
+    body: { name?: string; body?: string; tags?: string[] },
+  ) => patch<Recipe>(`/api/recipes/${enc(id)}`, body),
+  deleteRecipe: (id: string) => del<void>(`/api/recipes/${enc(id)}`),
+  useRecipe: (id: string) => post(`/api/recipes/${enc(id)}/used`),
+
+  // ----- M9: search -----
+  search: (q: string, projectId?: string, limit = 30) =>
+    get<SearchHit[]>(
+      `/api/search?q=${enc(q)}${projectId ? `&projectId=${enc(projectId)}` : ""}&limit=${limit}`,
+    ),
+  searchSessions: (q: string, projectId?: string) =>
+    get<Session[]>(
+      `/api/search/sessions?q=${enc(q)}${projectId ? `&projectId=${enc(projectId)}` : ""}`,
+    ),
+
+  // ----- M11: reviews -----
+  reviews: () => get<ReviewItem[]>("/api/reviews"),
+  dismissReview: (id: string) => post(`/api/reviews/${enc(id)}/dismiss`),
+
+  // ----- M14: digest -----
+  generateDigest: (range: "today" | "yesterday" | { hours: number }) =>
+    post<{ markdown: string; path: string; name: string }>("/api/digest", {
+      range,
+    }),
+  digests: () => get<{ name: string; ts: number }[]>("/api/digests"),
+  digest: (name: string) =>
+    get<{ markdown: string }>(`/api/digests/${enc(name)}`),
+
+  // ----- M15: budgets -----
+  patchBudgets: (body: {
+    monthlyUSD?: number | null;
+    blockUSD?: number | null;
+  }) => patch<{ monthlyUSD: number | null; blockUSD: number | null }>(
+    "/api/cost/budgets",
+    body,
+  ),
+
+  // ----- M17: task board -----
+  tasks: () => get<TaskCard[]>("/api/tasks"),
+  createTask: (body: {
+    title: string;
+    body?: string;
+    projectId: string;
+    recipeId?: string | null;
+  }) => post<TaskCard>("/api/tasks", body),
+  updateTask: (
+    id: string,
+    body: Partial<Pick<TaskCard, "title" | "body" | "projectId" | "order" | "status">>,
+  ) => patch<TaskCard>(`/api/tasks/${enc(id)}`, body),
+  deleteTask: (id: string) => del<void>(`/api/tasks/${enc(id)}`),
+  startTask: (id: string) => post<TaskCard>(`/api/tasks/${enc(id)}/start`),
+  setAutopilot: (body: Partial<AutopilotConfig>) =>
+    post<AutopilotConfig>("/api/tasks/autopilot", body),
+
+  // ----- M18: runbook + preview -----
+  runbook: (id: string) => get<RunbookInfo>(`/api/projects/${enc(id)}/runbook`),
+  saveRunbook: (id: string, runbook: Runbook) =>
+    put<RunbookInfo>(`/api/projects/${enc(id)}/runbook`, runbook),
+  runbookStatus: (id: string) =>
+    get<RunbookStatus>(`/api/projects/${enc(id)}/runbook/status`),
+  generateRunbook: (id: string) =>
+    post<RunbookInfo>(`/api/projects/${enc(id)}/runbook/generate`),
+
+  // ----- M19: system suite -----
+  systemOverview: (force = false) =>
+    get<SystemOverview>(`/api/system/overview${force ? "?force=1" : ""}`),
+  killPid: (pid: number) => post<{ ok: boolean }>(`/api/system/kill/${pid}`),
+
+  // ----- M20: stack (env + db + studio) -----
+  stack: (id: string) => get<StackReport>(`/api/projects/${enc(id)}/stack`),
+  revealEnv: (id: string, file: string, key: string) =>
+    get<{ value: string }>(
+      `/api/projects/${enc(id)}/env/reveal?file=${enc(file)}&key=${enc(key)}`,
+    ),
+  setEnv: (id: string, file: string, key: string, value: string) =>
+    put<{ ok: boolean }>(`/api/projects/${enc(id)}/env`, { file, key, value }),
+  dbOverview: (id: string) =>
+    get<DbOverview>(`/api/projects/${enc(id)}/db/overview`),
+  dbQuery: (id: string, sql: string) =>
+    post<DbQueryResult>(`/api/projects/${enc(id)}/db/query`, { sql }),
+  dbAiQuery: (id: string, question: string) =>
+    post<DbQueryResult>(`/api/projects/${enc(id)}/db/ai-query`, { question }),
+  studioStatus: (id: string) =>
+    get<StudioStatus>(`/api/projects/${enc(id)}/db/studio`),
+  studioStart: (id: string) =>
+    post<StudioStatus>(`/api/projects/${enc(id)}/db/studio/start`),
+  studioStop: (id: string) =>
+    post<StudioStatus>(`/api/projects/${enc(id)}/db/studio/stop`),
 };

@@ -60,6 +60,27 @@ export function matchDirToProject(
   return null;
 }
 
+// M10: is this encoded dir name under `config.root` (root itself or a subdir)?
+export function isRootDirName(dirName: string): boolean {
+  const rootEnc = encodePath(config.root);
+  return dirName === rootEnc || dirName.startsWith(rootEnc + "-");
+}
+
+// M10: transcript dirs that belong to the ROOT pseudo-project — those matching
+// `encodePath(root)` (exactly or with a `-` suffix) that are NOT claimed by any
+// real project's longer prefix. Adopts past bespoke sessions run from
+// `config.root` and from non-git subdirs like `G:\code\scratch`.
+export function unclaimedRootTranscriptDirs(realProjectPaths: string[]): string[] {
+  const realIndex = buildEncodedIndex(realProjectPaths);
+  const out: string[] = [];
+  for (const info of listTranscriptDirs()) {
+    if (!isRootDirName(info.name)) continue;
+    if (matchDirToProject(info.name, realIndex) !== null) continue; // real project owns it
+    out.push(info.dir);
+  }
+  return out;
+}
+
 // All transcript dirs that map to a given project path.
 export function transcriptDirsForProject(projectPath: string): string[] {
   const encoded = encodePath(projectPath);

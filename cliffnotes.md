@@ -4,17 +4,191 @@
 > Code agents. Read this before any coding session. Spec of record: `SPEC.md`
 > (locked). Build order: milestones M0→M6 in SPEC §13.
 
-Last updated: ALL milestones M0–M6 complete + verified (2026-07-04).
+Last updated: M0–M6 complete + verified (2026-07-04); **V2 M7–M17 built**
+(2026-07-05, typecheck + prod build green, live UI unverified — see V2 section).
+**V3 M18–M20 built** (2026-07-05, no spec — built direct; see V3 section).
 
-**V2 feature spec: `SPEC2.md`** (2026-07-05, not yet built) — M7–M17: AI
-service layer + usage ledger + AI Admin, Attention Inbox, global transcript
-search + resume, root pseudo-project, review queue, AI tab titles/summaries,
-prompt recipes/enhancer/commit messages, digests, cost expansion, cliffnotes
-tab, task board. Read it alongside this file before building any of those.
+**V2 feature spec: `SPEC2.md`** (2026-07-05) — M7–M17: **all built** (typecheck
++ prod web build green; live UI not yet exercised). See the V2 section below.
 
 ---
 
-## Restore ghost session tabs (2026-07-05)
+## V2 — the AI layer (M7–M17) built 2026-07-05
+
+All eleven milestones implemented. Both packages `bun run typecheck` clean and
+`web` prod-builds. **Needs a server restart** (new `state.json` shape — degrades
+gracefully via spread-merge + `loadState` backfill of `aiConfig/budgets/
+autopilot/reviews/recipes/tasks`) and a `bun install` (added deps below). Live
+browser flows not yet verified.
+
+**New deps:** `@anthropic-ai/sdk`, `better-sqlite3`, `@types/better-sqlite3`
+(server); `@radix-ui/react-popover` (web).
+
+**M7 — AI service choke point.** Every Deck-internal AI call goes through
+`server/src/ai/client.ts` `aiComplete(req)`: per-feature model (`ai/models.ts`
+registry — haiku for high-freq, sonnet for quality; never opus by default),
+daily budget gates (per-feature + global), append-only JSONL ledger
+(`ai/usage.ts` → `~/.deck/ai-usage.jsonl`, 90d in memory, rotates at 5MB), two
+backends (`claude-cli` default; `api` via SDK, auto-falls back to cli w/o key).
+**CLI prompt goes via STDIN** (`claude -p` reads stdin) to dodge Windows' ~8KB
+cmd-line limit + quoting — deviation from SPEC2's arg-passing, needed for big
+commit-diff/digest prompts. Always dismisses the `-p` transcript's `session_id`
+(no ghost card). `cleanEnv()` now lives in `server/src/lib/cleanEnv.ts` (pty
+re-exports). Routes `routes/ai.ts`: `GET /ai/usage|config`, `PATCH /ai/config`,
+`POST /ai/test|enhance`. Blurb route migrated onto `aiComplete`. Admin UI
+`web/src/views/AiAdminView.tsx` (top-level view). Config: `aiScratchDir`
+(`~/.deck/ai`), `anthropicApiKey`, `digestAt`.
+
+**M12 — AI tab titles/summaries.** `ai/liveMeta.ts` 120s ticker labels sessions
+with an OPEN tab/feed only (owned live + subscribed transcripts via
+`eventHub.hasSubscribers`), change-gated (transcript sig / ring-tail sha1),
+`Session.aiMeta`. Client title precedence via `lib/sessions.ts displayTitle()`
+(user rename > aiMeta.title > default name matching `/ (sh|cc)·[0-9a-f]{4}$/`).
+
+**M8 — Attention Inbox.** `pty/manager.tail()`, prompt-tail extraction in the 5s
+status ticker (`Session.promptTail`), `POST /sessions/:id/read`. Client
+`components/inbox/InboxPanel.tsx` (right slide-over, Ctrl+I, Rail bell badge),
+`lib/useInbox.ts` derives items (attention/finished/exited + M11 review + M15
+budget) client-side. Quick-respond sends via `sendInput`.
+
+**M9 — transcript search.** `search/indexer.ts` (better-sqlite3 FTS5 at
+`~/.deck/search.db`, boot sweep 5-files/tick, live re-index debounced 2s off the
+transcript change hook). `routes/search.ts` (`GET /search`, `/search/sessions`).
+Snippet sentinels **U+E000/U+E001** (client → `<mark>`, no innerHTML).
+`components/SearchDialog.tsx` (Ctrl+Shift+F / palette / AgentsTab history).
+`uiStore.feedJump` → `Feed.tsx` scrolls to the event + 2s flash. Resume =
+`resumeTranscript`.
+
+**M11 — review queue.** `reviews/service.ts` hooked into the status ticker
+(owned claude `working → idle/attention`); collects Edit/Write files since a
+per-session checkpoint, upserts `state.reviews`, fires `reviewSummary`.
+Broadcasts `reviews.updated`. `routes/reviews.ts`. `stores/reviewsStore.ts`,
+inbox `review` kind, `uiStore.gitFocusPath` → `GitTab` focuses the file.
+
+**M13 — recipes/enhancer/commit-msg.** `state.recipes` + `routes/recipes.ts`;
+`components/recipes/RecipesDialog.tsx`; shared `components/prompt/PromptToolbar.
+tsx` (recipe insert + enhance) in Composer + board composer. `POST /ai/enhance`.
+`POST /projects/:id/git/commit-message` (+ `git/service.diffForAi`), CommitBox
+AI split button (`uiStore.commitStyle`). **Spawn-with-initialPrompt**:
+`CreateSessionInput.initialPrompt` → appended as the LAST positional claude argv
+(interactive TUI submits it). Palette `Recipe: <name>` launches into a fresh
+claude.
+
+**M14 — digest.** `digest/service.ts generateDigest(from,to)` (commits +
+sessions + cost per project → one `digest` call → `~/.deck/digests/`), optional
+`digestAt` scheduler → `digest.ready`. `routes/digest.ts`, `views/DigestView.tsx`.
+
+**M15 — cost expansion.** `state.budgets` + `PATCH /cost/budgets`; cost report
+gains `aiProject` (`__deck_ai__`), `DailyCost.aiCost`/`byModel`. Dashboard:
+BudgetBar (MTD vs monthly, amber>80/red>100), active-block red tint + live
+countdown, stacked-by-model daily bars + Deck-AI segment, `__deck_ai__` row →
+AI Admin, SessionHeader cost chip. Budget-over inbox card in `useInbox`.
+
+**M10 — root pseudo-project (`__root__`).** `projectRegistry` synthesizes it in
+`getAll/getById/getPath` (id `__root__`, path `config.root`, `kind:"root"`,
+activity = newest unclaimed root transcript-dir mtime, 30s cache);
+`locator.unclaimedRootTranscriptDirs`. Excluded from git-heartbeat + refreshTopGit;
+git/files routes 404 for it, pin/hide 400. Client: fixed Rail entry
+(SquareTerminal), agents-only tabs (`ROOT_VIEWS`), header hides branch/dirty/
+WebStorm, excluded from Library grid.
+
+**M16 — cliffnotes tab.** `ProjectViewKind += "notes"`;
+`uiStore.ensureProjectViews` appends missing view tabs (adds notes to old
+projects; keeps root agents-only). `components/project/NotesTab.tsx` renders
+cliffnotes.md/ui.md; Generate = visible `spawnSession(initialPrompt)` + poll.
+
+**M17 — task board.** `state.tasks` + `state.autopilot`; `tasks/service.ts`
+(create/update/delete/startTask) + `tasks/autopilot.ts` (15s drain). `routes/
+tasks.ts` (note `/tasks/autopilot` registered before `/tasks/:id`). `views/
+BoardView.tsx` (6 columns, pre-run manual + derived-from-session; native DnD;
+NewCardComposer w/ PromptToolbar; autopilot toggle). `stores/tasksStore.ts`,
+`tasks.updated` WS.
+
+**Top-level view mechanism:** `uiStore.topView: "costs"|"ai"|"digest"|"board"`
+(replaced the old `costsOpen` bool) routed in `App.tsx`; Rail footer icons +
+palette entries. New small primitives: `components/ui/Switch.tsx`,
+`components/ui/Toast.tsx` (`toast()` + `<Toaster/>`), `deck-shake` anim.
+
+**V2 gotchas:** (1) server needs restart for new state shape; (2) CLI AI prompt
+via stdin (not argv); (3) FTS sentinels are PUA U+E000/E001 — keep server+client
+in sync; (4) `liveMeta`/`reviews`/`autopilot` all await `aiComplete`
+sequentially (per-feature in-flight guard drops concurrent calls); (5) stray
+`server/src/_verify.tmp.ts` is a leftover Library-feature harness (not mine;
+harmless, typechecks).
+
+---
+
+## V3 — runbook / system suite / stack intelligence (M18–M20) built 2026-07-05
+
+Typecheck (both) + web prod build green; **live UI unverified, needs server
+restart + `bun install`** (new dep: `pg` + `@types/pg`). No state-shape change.
+Builds on the parallel-session Library feature (`projects/inspector.ts`,
+`projects/ports.ts` portWatcher, `screenshots.ts`).
+
+**M18 — runbook + Preview tab.** `deck.run.json` at each repo root =
+machine-readable "how to run/test" (`Runbook`: dev{command,port,url} / test /
+install / notes). `server/src/runbook/service.ts`: read/sanitize/write, detection
+fallback from inspector (dev/start script + runner + staticPorts), `probePort`
+TCP probe, AI generate (feature id `runbook`, cli backend w/ cwd, writes the
+file). Routes `routes/runbook.ts`: GET/PUT `/projects/:id/runbook`, GET
+`…/runbook/status` (effective port = file > livePorts), POST `…/runbook/generate`.
+Root project 404s. Client `components/project/PreviewTab.tsx` (new "preview"
+view tab): **iframe of the running app** (dev servers send no X-Frame-Options),
+mobile-390px frame toggle, reload/open-external, Start-dev button = visible
+shell session (`createSession{kind:"shell",command}` — same as Library run
+buttons), Test button, inline runbook editor + ✨Generate. Status poll: 3s until
+listening, then 15s.
+
+**M19 — System view (ports + processes + kill).** `server/src/system/service.ts`:
+netstat (`listListeningPorts`, now exported from `projects/ports.ts`) + ONE
+PowerShell/CIM round-trip (all live pids for orphan detection + rows for
+node/bun/deno/python* and any port-owning pid: cmdline, WorkingSet, CreationDate
+→ unix ms). Projects matched by cmdline-contains-project-path. 3s cache;
+`killProcess` = `taskkill /T /F` (refuses own pid/ppid, pid<=4). Routes
+`routes/system.ts`: GET `/system/overview`, POST `/system/kill/:pid`. Client
+`views/SystemView.tsx` = new `topView:"system"` (Rail Activity icon + palette
+"System: ports + processes"): processes grouped by project (mem/uptime/ports/
+cmdline/kill, orphan badge + "Kill N orphaned"), all-listening-ports table
+(port links to localhost, kill by owning pid). Polls 5s while open.
+
+**M20 — Stack tab (env + DB + Prisma Studio).** `server/src/env/service.ts`:
+one BFS (`scanTree`) walks the repo **4 dirs deep** (skips node_modules/dist/
+build/coverage/vendor/tmp/venv/target + all dot-dirs, 1500-dir cap) collecting
+`.env*` files, every `schema.prisma`, and every package.json name; each env
+file is tagged with its nearest **workspace** (`EnvFile.workspace`, monorepo
+grouping — null = repo root) and each var with a rough `EnvVarCategory`
+(ai/database/auth/payments/storage/email/urls/config/other, `CATEGORY_RULES`
+order matters). StackTab groups file cards under workspace headers + shows a
+category chip per var. Masked vars (`abcd…xy`), stack badges (anthropic/openai/
+postgres/mysql/sqlite/prisma/drizzle/redis/supabase/stripe/s3) from env keys +
+inspector frameworks + schema.prisma (shallowest wins); DATABASE_URL detection
+(non-example postgres wins);
+`setEnvVar` edits in place w/ backup to `~/.deck/env-backups/`; values NEVER go
+to AI. `server/src/db/service.ts` (**pg**): overview (version/db/tables w/
+reltuples estimates), `runReadOnlyQuery` (single SELECT-shaped stmt only, READ
+ONLY txn + rollback, 10s statement_timeout, 500-row cap), `aiQuery` (feature id
+`dbQuery`: schema summary → SQL via aiComplete → guarded run).
+`server/src/db/studio.ts`: one managed `npx prisma studio --browser none` per
+project (free port from 5555, cwd = package dir owning `prisma/`, cleanEnv,
+90s first-run wait, taskkill tree stop, disposeAll on shutdown). Routes
+`routes/stack.ts`: `/projects/:id/stack`, `/env/reveal`, PUT `/env`,
+`/db/overview|query|ai-query|studio(+/start|/stop)`. Client
+`components/project/StackTab.tsx` (new "stack" view tab): badge row, DB panel
+(connection line + Studio launch/stop + **Studio iframe embed**, clickable
+table chips → query, one query box that runs raw SELECTs directly or AI-
+translates English), env files w/ per-var reveal/edit.
+
+**Wiring:** `ProjectViewKind += "preview"|"stack"` (uiStore DEFAULT_VIEWS +
+ProjectShell VIEW_META/NORMAL_VIEWS — `ensureProjectViews` auto-adds to old
+projects; root stays agents-only), `TopView += "system"` (App.tsx route, Rail
+footer). `AiFeatureId += "runbook"|"dbQuery"` (models.ts registry, sonnet).
+api.ts: runbook*/systemOverview/killPid/stack/revealEnv/setEnv/db*/studio*.
+
+**V3 gotchas:** (1) `pg` is CJS — `import pg from "pg"; const {Client}=pg`;
+(2) system PS query injects portPids into the script string — placeholder `0`
+when none (System Idle Process row is filtered by name downstream); (3) env
+reveal values ride a dedicated GET, never the batch stack report; (4) studio
+port probe reuses `runbook/service.probePort` (no cycle: studio→runbook→ai).
 
 Tabs persist to localStorage (`uiStore.projectTabs`) but sessions don't — they're
 re-derived on boot from `/api/sessions` (= live owned in-memory + <30min external
@@ -47,6 +221,20 @@ found". Now they **reconnect to what's on disk** instead.
 - New files: `server/src/pty/scrollback.ts`, `web/src/components/session/RestoredSessionView.tsx`.
   Verified in isolation (ANSI strip/tail round-trip + real transcript parse, 12/12);
   live browser flow untested (needs prod rebuild/restart).
+
+## Wide sidebar (2026-07-05)
+
+`components/Rail.tsx` rewritten from a 52px Discord-style initials strip into a
+**wide sidebar** (readable project names). Width = persisted
+`uiStore.sidebarWidth` (default 264, clamp 200–420) with a drag handle on the
+right edge (rail starts at x=0 so pointer clientX ≈ width). Rows: Library /
+Inbox (badge) / `~ code`, then an "Open projects" section — each project row =
+gradient avatar (status dot: amber attention / green pulse working) + name +
+meta line (branch, `N±` dirty in warn, "N agents"/"needs input") + hover X
+close; middle-click closes; same right-click menu (Close / Close others /
+Explorer / WebStorm). Footer = horizontal icon row (System/Board/Digest/AI/
+Costs/Settings). Active row gets a left accent bar + bg-raised. Ctrl+B still
+hides the whole thing (`sidebarCollapsed`).
 
 ## Terminal Nerd Font icons (2026-07-05)
 

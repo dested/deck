@@ -14,11 +14,27 @@ import { transcriptRegistry } from "./transcripts/registry.js";
 import { primeCostReport } from "./cost/service.js";
 import { addTranscriptChangeListener } from "./transcripts/tailer.js";
 import { eventHub } from "./ws/events.js";
+import fs from "node:fs";
+import { config } from "./config.js";
+import { usageLedger } from "./ai/usage.js";
+import { startLiveMetaTicker, stopLiveMetaTicker } from "./ai/liveMeta.js";
+import { searchIndexer } from "./search/indexer.js";
+import { startDigestScheduler, stopDigestScheduler } from "./digest/service.js";
+import { startAutopilot, stopAutopilot } from "./tasks/autopilot.js";
+import { studioManager } from "./db/studio.js";
 
 let rescanTimer: NodeJS.Timeout | null = null;
 let externalTimer: NodeJS.Timeout | null = null;
 
 export async function startServices() {
+  // M7: AI scratch dir + usage ledger warm-up.
+  try {
+    fs.mkdirSync(config.aiScratchDir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  usageLedger.load();
+
   ptyManager.init();
   sessionManager.startStatusTicker();
 
@@ -34,6 +50,23 @@ export async function startServices() {
     sessionManager.ownedTranscriptIds(),
   );
   addTranscriptChangeListener((file) => transcriptRegistry.onFileChanged(file));
+
+  // M9: FTS search index. Boot sweep is incremental; live changes re-index the
+  // touched file (debounced 2s) off the same central change hook.
+  searchIndexer.init();
+  const searchDebounce = new Map<string, NodeJS.Timeout>();
+  addTranscriptChangeListener((file) => {
+    const prev = searchDebounce.get(file);
+    if (prev) clearTimeout(prev);
+    searchDebounce.set(
+      file,
+      setTimeout(() => {
+        searchDebounce.delete(file);
+        searchIndexer.indexFile(file);
+      }, 2000),
+    );
+  });
+  searchIndexer.sweep();
 
   startWatchers();
 
@@ -71,6 +104,13 @@ export async function startServices() {
   // its first bun-x resolve). Fire-and-forget; failures degrade gracefully.
   primeCostReport();
 
+  // M12: AI tab titles/summaries for sessions with an open tab/feed.
+  startLiveMetaTicker();
+
+  // M14: optional scheduled daily digest. M17: task-board autopilot.
+  startDigestScheduler();
+  startAutopilot();
+
   console.log(
     `[deck] discovered ${projectRegistry.getAll().length} projects, ` +
       `${sessionManager.list().length} sessions`,
@@ -80,6 +120,10 @@ export async function startServices() {
 export function stopServices() {
   if (rescanTimer) clearInterval(rescanTimer);
   if (externalTimer) clearInterval(externalTimer);
+  stopLiveMetaTicker();
+  stopDigestScheduler();
+  stopAutopilot();
+  studioManager.disposeAll();
   portWatcher.stop();
   void stopWatchers();
 }

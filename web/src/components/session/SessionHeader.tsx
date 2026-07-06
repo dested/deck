@@ -6,6 +6,8 @@ import { IconButton } from "../ui/IconButton";
 import { useUIStore } from "../../stores/uiStore";
 import { api } from "../../lib/api";
 import { closeSession } from "../../lib/sessions";
+import { useSessionCost } from "../../lib/useCost";
+import { fmtUsd } from "../../lib/format";
 
 // M2: dot, editable name, project link, kill. Restart/adopt/group added in M4.
 export function SessionHeader({
@@ -16,6 +18,7 @@ export function SessionHeader({
   right?: ReactNode;
 }) {
   const openProject = useUIStore((s) => s.openProject);
+  const cost = useSessionCost(session.transcriptSessionId);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(session.name);
 
@@ -44,15 +47,22 @@ export function SessionHeader({
           className="h-7 rounded-[5px] border border-hairfocus bg-raised px-2 text-[13px] text-t1 focus:outline-none"
         />
       ) : (
-        <button
-          onClick={() => {
-            setName(session.name);
-            setEditing(true);
-          }}
-          className="text-[14px] font-semibold text-t1 hover:text-accenttext"
-        >
-          {session.name}
-        </button>
+        <div className="flex min-w-0 flex-col justify-center">
+          <button
+            onClick={() => {
+              setName(session.name);
+              setEditing(true);
+            }}
+            className="truncate text-left text-[14px] font-semibold leading-tight text-t1 hover:text-accenttext"
+          >
+            {session.name}
+          </button>
+          {session.aiMeta?.summary && (
+            <span className="truncate text-[11px] leading-tight text-t3">
+              {session.aiMeta.summary}
+            </span>
+          )}
+        </div>
       )}
       <button
         onClick={() => openProject(session.projectId)}
@@ -63,6 +73,14 @@ export function SessionHeader({
       {session.source === "external" && (
         <span className="rounded-[4px] bg-raised px-1.5 py-0.5 text-[10.5px] text-t3">
           external
+        </span>
+      )}
+      {cost && cost.cost > 0 && (
+        <span
+          className="mono rounded-[4px] bg-raised px-1.5 py-0.5 text-[10.5px] text-accenttext"
+          title="Session cost (ccusage)"
+        >
+          {fmtUsd(cost.cost)}
         </span>
       )}
       <div className="ml-auto flex items-center gap-1">

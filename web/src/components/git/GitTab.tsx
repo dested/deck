@@ -29,6 +29,23 @@ export function GitTab({ projectId }: { projectId: string }) {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["git", projectId] });
 
+  // M11: when a review card focuses a file, select it in the diff, then clear.
+  const gitFocusPath = useUIStore((s) => s.gitFocusPath);
+  const setGitFocusPath = useUIStore((s) => s.setGitFocusPath);
+  useEffect(() => {
+    if (!gitFocusPath || gitFocusPath.projectId !== projectId || !status) return;
+    const path = gitFocusPath.path;
+    const inStaged = status.staged.some((e) => e.path === path);
+    const inChanges = [...status.unstaged, ...status.conflicted].some(
+      (e) => e.path === path,
+    );
+    if (inStaged || inChanges) {
+      setCommitHash(null);
+      setFile({ path, staged: inStaged && !inChanges });
+    }
+    setGitFocusPath(null);
+  }, [gitFocusPath, projectId, status, setGitFocusPath]);
+
   // Keep the selected file valid as status changes.
   useEffect(() => {
     if (!status || !file) return;
@@ -86,6 +103,11 @@ export function GitTab({ projectId }: { projectId: string }) {
         <CommitBox
           projectId={projectId}
           stagedCount={status?.staged.length ?? 0}
+          dirty={
+            (status?.staged.length ?? 0) > 0 ||
+            (status?.unstaged.length ?? 0) > 0 ||
+            (status?.conflicted.length ?? 0) > 0
+          }
           aheadBehind={status?.aheadBehind ?? null}
           hasUpstream={!!status?.upstream}
           onCommitted={refresh}

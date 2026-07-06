@@ -7,11 +7,11 @@ import type {
   ProjectInspection,
   Group,
 } from "@deck/shared";
-import { projectRegistry } from "../projects/registry.js";
+import { projectRegistry, ROOT_PROJECT_ID } from "../projects/registry.js";
 import { inspectProject } from "../projects/inspector.js";
 import { portWatcher } from "../projects/ports.js";
 import { screenshotService } from "../projects/screenshots.js";
-import { ptyManager, cleanEnv } from "../pty/manager.js";
+import { aiComplete } from "../ai/client.js";
 import { getState, updateState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
 import { config } from "../config.js";
@@ -91,36 +91,26 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     },
   );
 
-  // ✨ AI blurb: one-shot `claude -p` summary of the repo, persisted in state.
+  // ✨ AI blurb: one-shot repo summary via the M7 choke point (cost-tracked; the
+  // client dismisses the transcript so no ghost agent card is left behind).
   app.post<{ Params: { id: string } }>(
     "/projects/:id/blurb",
     async (req, reply) => {
       const p = projectRegistry.getById(req.params.id);
       if (!p) return reply.code(404).send({ error: "project not found" });
-      const bin = ptyManager.getClaudeBin();
-      if (!bin) return reply.code(400).send({ error: "claude binary not found" });
       const prompt =
         "Skim this repository (README, package.json, a key source file or two) " +
         "and describe what it is in ONE sentence of at most 140 characters. " +
         "Output only that sentence — no preamble, no quotes.";
-      const text = await new Promise<string | null>((resolve) => {
-        execFile(
-          "cmd",
-          ["/c", bin, "-p", prompt],
-          {
-            cwd: p.path,
-            env: cleanEnv(),
-            windowsHide: true,
-            timeout: 180_000,
-            maxBuffer: 1024 * 1024,
-          },
-          (err, stdout) => {
-            if (err) return resolve(null);
-            const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
-            resolve(line?.trim() || null);
-          },
-        );
+      const res = await aiComplete({
+        feature: "blurb",
+        prompt,
+        cwd: p.path,
+        timeoutMs: 180_000,
       });
+      const text = res?.text
+        ? res.text.split(/\r?\n/).filter(Boolean).pop()?.trim() || null
+        : null;
       if (!text)
         return reply.code(502).send({ error: "claude summary failed" });
       updateState((s) => {
@@ -143,6 +133,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     "/projects/:id/pin",
     async (req, reply) => {
       const { id } = req.params;
+      if (id === ROOT_PROJECT_ID)
+        return reply.code(400).send({ error: "root project cannot be pinned" });
       if (!projectRegistry.getById(id))
         return reply.code(404).send({ error: "not found" });
       updateState((s) => {
@@ -160,6 +152,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     "/projects/:id/hide",
     async (req, reply) => {
       const { id } = req.params;
+      if (id === ROOT_PROJECT_ID)
+        return reply.code(400).send({ error: "root project cannot be hidden" });
       if (!projectRegistry.getById(id))
         return reply.code(404).send({ error: "not found" });
       updateState((s) => {

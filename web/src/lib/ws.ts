@@ -4,7 +4,10 @@ import { useProjectsStore } from "../stores/projectsStore";
 import { useProjectGroupsStore } from "../stores/projectGroupsStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { useSessionsStore } from "../stores/sessionsStore";
+import { useReviewsStore } from "../stores/reviewsStore";
+import { useTasksStore } from "../stores/tasksStore";
 import { useUIStore } from "../stores/uiStore";
+import { toast } from "../components/ui/Toast";
 
 type Listener = (msg: WsServerMsg) => void;
 
@@ -113,6 +116,15 @@ class EventsClient {
         this.queryClient?.invalidateQueries({
           queryKey: ["git", msg.projectId],
         });
+        break;
+      case "reviews.updated":
+        useReviewsStore.getState().upsert(msg.payload);
+        break;
+      case "tasks.updated":
+        useTasksStore.getState().upsert(msg.payload);
+        break;
+      case "digest.ready":
+        toast(`Digest ready: ${msg.name}`, "info");
         break;
       // transcript.append + session.attention handled by component listeners
     }

@@ -1,28 +1,38 @@
 import { useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Check, ArrowUp } from "lucide-react";
+import { ChevronDown, Check, ArrowUp, Sparkles, RefreshCw } from "lucide-react";
 import type { AheadBehind } from "@deck/shared";
 import { api } from "../../lib/api";
 import { Button } from "../ui/Button";
 import { menuContent, menuContentStyle, menuItem } from "../ui/menuStyles";
+import { useUIStore } from "../../stores/uiStore";
+import { cn } from "../../lib/cn";
+
+const STYLES = ["terse", "conventional", "verbose"] as const;
 
 export function CommitBox({
   projectId,
   stagedCount,
+  dirty,
   aheadBehind,
   hasUpstream,
   onCommitted,
 }: {
   projectId: string;
   stagedCount: number;
+  dirty: boolean;
   aheadBehind: AheadBehind | null;
   hasUpstream: boolean;
   onCommitted: () => void;
 }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generated, setGenerated] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [err, setErr] = useState(false);
+  const commitStyle = useUIStore((s) => s.commitStyle);
+  const setCommitStyle = useUIStore((s) => s.setCommitStyle);
 
   const ahead = aheadBehind?.ahead ?? 0;
   // Something to push when the branch is ahead, or it has no upstream yet
@@ -71,6 +81,23 @@ export function CommitBox({
     if (await doCommit(false)) await doPush();
   };
 
+  // M13: AI commit-message generation (sonnet). Fills the textarea; the main
+  // click uses the last style, chevron picks another.
+  const generate = async (style: (typeof STYLES)[number]) => {
+    if (generating) return;
+    setCommitStyle(style);
+    setGenerating(true);
+    try {
+      const res = await api.gitCommitMessage(projectId, style);
+      setMessage(res.message);
+      setGenerated(true);
+    } catch (e) {
+      flash(String(e).slice(0, 80), true);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="border-t border-hair p-3">
       <textarea
@@ -95,6 +122,53 @@ export function CommitBox({
         >
           Commit
         </Button>
+
+        {/* AI commit-message split button */}
+        <div className="flex overflow-hidden rounded-[6px] border border-hair">
+          <button
+            onClick={() => void generate(commitStyle)}
+            disabled={!dirty || generating}
+            title={`Generate ${commitStyle} commit message`}
+            className="flex h-7 items-center gap-1 bg-raised px-2 text-[12px] text-t2 hover:bg-overlay hover:text-t1 disabled:opacity-40"
+          >
+            {generated ? (
+              <RefreshCw size={12} className={cn(generating && "animate-spin")} />
+            ) : (
+              <Sparkles size={13} className={cn(generating && "animate-pulse text-accenttext")} />
+            )}
+            {generating ? "…" : "AI"}
+          </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                disabled={!dirty || generating}
+                className="flex h-7 w-6 items-center justify-center border-l border-hair bg-raised text-t3 hover:bg-overlay hover:text-t1 disabled:opacity-40 data-[state=open]:bg-overlay"
+                aria-label="Commit message style"
+              >
+                <ChevronDown size={13} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="start"
+                sideOffset={4}
+                className={menuContent}
+                style={menuContentStyle}
+              >
+                {STYLES.map((s) => (
+                  <DropdownMenu.Item
+                    key={s}
+                    className={menuItem}
+                    onSelect={() => void generate(s)}
+                  >
+                    <span className="capitalize">{s}</span>
+                    {s === commitStyle && <Check size={13} className="ml-auto" />}
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
         <Button
           variant="ghost"
           size="sm"

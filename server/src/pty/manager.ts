@@ -8,6 +8,11 @@ import type { Terminal as HeadlessTerminalType } from "@xterm/headless";
 import type { SerializeAddon as SerializeAddonType } from "@xterm/addon-serialize";
 import { config } from "../config.js";
 import { RingBuffer } from "./ringBuffer.js";
+import { cleanEnv } from "../lib/cleanEnv.js";
+
+// Re-exported from its shared home so existing importers (`pty/manager`) keep
+// working (gotcha #4 — one copy of cleanEnv).
+export { cleanEnv };
 
 const { Terminal: HeadlessTerminal } = HeadlessPkg;
 const { SerializeAddon } = SerializePkg;
@@ -26,6 +31,10 @@ export interface SpawnOptions {
   // Shell kind only: run this command in the shell (kept open after it exits)
   // — powers the Library card's one-click script launchers.
   command?: string;
+  // M13: claude kind only — submit this as the first message. Passed as a
+  // positional CLI arg (`claude "<prompt>"`), which the interactive TUI submits
+  // as the opening message. No pty-typing hack.
+  initialPrompt?: string;
 }
 
 type DataListener = (data: string) => void;
@@ -50,21 +59,6 @@ interface PtyRecord {
   transcriptSessionId: string | null; // linked in M4
   dataListeners: Set<DataListener>;
   exitListeners: Set<ExitListener>;
-}
-
-// Strip Claude Code's own env markers so a claude session Deck spawns runs as a
-// fresh TOP-LEVEL session (writes its own transcript). If Deck itself is
-// launched from inside a Claude Code session, CLAUDE_CODE_CHILD_SESSION=1 /
-// CLAUDE_CODE_SESSION_ID would otherwise make nested claude a child that never
-// persists a transcript — breaking §5.2 linkage.
-export function cleanEnv(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (/^CLAUDE(CODE)?(_|$)/i.test(k)) continue; // CLAUDECODE, CLAUDE_CODE_*, CLAUDE_*
-    out[k] = v;
-  }
-  return out;
 }
 
 const RING_MAX = 2 * 1024 * 1024; // 2MB (§5.3)
@@ -178,13 +172,18 @@ class PtyManager {
   private resolveCommand(opts: SpawnOptions): { file: string; args: string[] } {
     if (opts.kind === "claude") {
       const bin = this.claudeBin;
+      // The initial prompt (M13) is the LAST positional argv element.
+      const allArgs = [
+        ...(opts.claudeArgs ?? []),
+        ...(opts.initialPrompt ? [opts.initialPrompt] : []),
+      ];
       if (bin && /\.exe$/i.test(bin)) {
-        return { file: bin, args: opts.claudeArgs ?? [] };
+        return { file: bin, args: allArgs };
       }
       // .cmd shim (or unknown): run through pwsh so ConPTY handles the shim
       // cleanly and exit codes/colours propagate.
       const call = bin ? `& '${bin}'` : "claude";
-      const argStr = (opts.claudeArgs ?? [])
+      const argStr = allArgs
         .map((a) => `'${a.replace(/'/g, "''")}'`)
         .join(" ");
       return {
@@ -203,6 +202,15 @@ class PtyManager {
 
   get(id: string): PtyRecord | undefined {
     return this.records.get(id);
+  }
+
+  // Last `maxBytes` chars of raw terminal output (M8 prompt-tail, M12 change
+  // gate). Reads from the 2MB RingBuffer; empty for unknown/exited-then-swept.
+  tail(id: string, maxBytes = 4096): string {
+    const rec = this.records.get(id);
+    if (!rec) return "";
+    const snap = rec.ring.snapshot();
+    return snap.length > maxBytes ? snap.slice(snap.length - maxBytes) : snap;
   }
 
   write(id: string, data: string) {

@@ -32,6 +32,18 @@ export function useGlobalKeys() {
         ui.toggleSidebar();
         return;
       }
+      // Ctrl+I — toggle the Attention Inbox
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        ui.setInboxOpen(!ui.inboxOpen);
+        return;
+      }
+      // Ctrl+Shift+F — transcript search dialog
+      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        ui.openSearch();
+        return;
+      }
       // Ctrl+W — close active tab (of the active project; views are permanent)
       if (mod && e.key.toLowerCase() === "w") {
         e.preventDefault();

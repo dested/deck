@@ -10,6 +10,7 @@ import {
   Cpu,
   Clock,
   DollarSign,
+  Search,
 } from "lucide-react";
 import type { Session, SessionStatus } from "@deck/shared";
 import { api } from "../../lib/api";
@@ -110,6 +111,13 @@ export function AgentsTab({ projectId }: { projectId: string }) {
           <div className="section-label mb-2.5 flex items-center gap-1.5">
             <History size={12} /> History
             <span className="mono text-t3">{history.length}</span>
+            <button
+              onClick={() => useUIStore.getState().openSearch(projectId)}
+              className="ml-auto flex items-center gap-1 rounded-[5px] border border-hair px-1.5 py-0.5 text-[11px] font-normal normal-case tracking-normal text-t3 hover:bg-raised hover:text-t1"
+              title="Search this project's transcripts"
+            >
+              <Search size={11} /> Search
+            </button>
           </div>
           <HistoryList sessions={history} />
         </section>
@@ -194,7 +202,7 @@ function LiveCard({ session }: { session: Session }) {
           {/* Title + status */}
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold text-t1">
-              {session.title ?? session.name}
+              {session.aiMeta?.title ?? session.title ?? session.name}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1.5">
               <span
@@ -216,12 +224,17 @@ function LiveCard({ session }: { session: Session }) {
             </div>
           )}
 
-          {/* What it's doing right now */}
-          {session.lastActivityLine && (
-            <div className="mt-1.5 truncate text-[12.5px] text-t2">
-              {session.lastActivityLine}
-            </div>
-          )}
+          {/* What it's doing right now — the live activity line while working,
+              falling back to the AI summary when idle (M12). */}
+          {(() => {
+            const line =
+              session.status === "working"
+                ? session.lastActivityLine
+                : (session.aiMeta?.summary ?? session.lastActivityLine);
+            return line ? (
+              <div className="mt-1.5 truncate text-[12.5px] text-t2">{line}</div>
+            ) : null;
+          })()}
 
           {/* Stat chips */}
           <div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1">

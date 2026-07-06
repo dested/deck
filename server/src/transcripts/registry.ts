@@ -45,12 +45,36 @@ class TranscriptRegistry {
   // SEPARATE from the parse cache so the status ticker refreshing the cache
   // can't "consume" a change before the live-diff sees it.
   private emittedSigs = new Map<string, Map<string, string>>();
+  // M12: AI tab title/summary per external transcript id, folded into toSession.
+  private aiMeta = new Map<string, { title: string; summary: string; at: number }>();
   // Injected by services: transcript ids currently backed by an owned pty, so
   // they aren't also surfaced as external sessions (avoids duplicates).
   private ownedChecker: () => Set<string> = () => new Set();
 
   setOwnedTranscriptChecker(fn: () => Set<string>) {
     this.ownedChecker = fn;
+  }
+
+  // M12: transcript ids with a live feed/tab subscription (candidates for AI
+  // meta). The refcounts live in eventHub; we track the subscribe set here.
+  subscribedIds(): string[] {
+    return [...this.subscribed];
+  }
+
+  // M12: set the AI-generated meta for an external transcript and republish.
+  setAiMeta(
+    transcriptId: string,
+    meta: { title: string; summary: string; at: number },
+  ) {
+    this.aiMeta.set(transcriptId, meta);
+    const meta2 = this.index.get(transcriptId);
+    const parsed = meta2 ? this.getParsed(transcriptId) : null;
+    if (meta2 && parsed) {
+      eventHub.publish([topics.sessions], {
+        t: "sessions.updated",
+        payload: this.toSession(meta2, parsed),
+      });
+    }
   }
 
   // Close means close, FOREVER. Once you dismiss an agent it stays out of the
@@ -210,6 +234,7 @@ class TranscriptRegistry {
       unread: false,
       title: parsed.title,
       stats: computeStats(parsed.events, parsed.model),
+      aiMeta: this.aiMeta.get(meta.sessionId) ?? null,
     };
   }
 

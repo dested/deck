@@ -8,12 +8,19 @@ import {
   X,
   Settings,
   DollarSign,
+  Sparkles,
+  Newspaper,
+  Kanban,
+  BookMarked,
+  Activity,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
 import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
 import { useSessionsStore, selectSessions, isLive } from "../stores/sessionsStore";
 import { spawnSession, closeSession } from "../lib/sessions";
+import { useRecipes } from "../lib/useRecipes";
+import { api } from "../lib/api";
 import { cn } from "../lib/cn";
 
 interface Command {
@@ -29,6 +36,7 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen);
   const projects = useProjectsStore((s) => s.byId);
   const sessions = useSessionsStore((s) => s.byId);
+  const { data: recipes } = useRecipes();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -40,7 +48,43 @@ export function CommandPalette() {
       id: "costs",
       label: "Open Costs dashboard",
       icon: <DollarSign size={15} />,
-      run: () => ui.setCostsOpen(true),
+      run: () => ui.setTopView("costs"),
+    });
+    cmds.push({
+      id: "ai-admin",
+      label: "AI Admin",
+      icon: <Sparkles size={15} />,
+      run: () => ui.setTopView("ai"),
+    });
+    cmds.push({
+      id: "digest",
+      label: "Daily digest",
+      icon: <Newspaper size={15} />,
+      run: () => ui.setTopView("digest"),
+    });
+    cmds.push({
+      id: "board",
+      label: "Task board",
+      icon: <Kanban size={15} />,
+      run: () => ui.setTopView("board"),
+    });
+    cmds.push({
+      id: "system",
+      label: "System: ports + processes",
+      icon: <Activity size={15} />,
+      run: () => ui.setTopView("system"),
+    });
+    cmds.push({
+      id: "search",
+      label: "Search transcripts…",
+      icon: <Search size={15} />,
+      run: () => ui.openSearch(),
+    });
+    cmds.push({
+      id: "recipes",
+      label: "Manage recipes",
+      icon: <BookMarked size={15} />,
+      run: () => ui.setRecipesOpen(true),
     });
     cmds.push({
       id: "settings",
@@ -61,6 +105,25 @@ export function CommandPalette() {
         label: `Close ${s.name}`,
         icon: <X size={15} />,
         run: () => closeSession(s),
+      });
+    }
+    // Recipe launchers — spawn a fresh claude in the active project (or root)
+    // with the recipe as the first message.
+    for (const r of recipes ?? []) {
+      cmds.push({
+        id: "recipe:" + r.id,
+        label: `Recipe: ${r.name}`,
+        hint: "launch",
+        icon: <BookMarked size={15} />,
+        run: () => {
+          const pid = ui.activeProjectId ?? "__root__";
+          void spawnSession(pid, "claude", {
+            initialPrompt: r.body,
+            name: r.name,
+          })
+            .then(() => api.useRecipe(r.id))
+            .catch(() => {});
+        },
       });
     }
     for (const p of selectSortedProjects(projects)) {
@@ -85,7 +148,7 @@ export function CommandPalette() {
       });
     }
     return cmds;
-  }, [projects, sessions]);
+  }, [projects, sessions, recipes]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

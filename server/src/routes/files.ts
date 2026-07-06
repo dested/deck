@@ -1,10 +1,12 @@
 import type { FastifyInstance } from "fastify";
-import { projectRegistry } from "../projects/registry.js";
+import { projectRegistry, ROOT_PROJECT_ID } from "../projects/registry.js";
 import { readFileContent, writeFileContent } from "../files/io.js";
 import { listTree } from "../files/tree.js";
 
 export async function registerFileRoutes(app: FastifyInstance) {
-  const repo = (id: string) => projectRegistry.getPath(id);
+  // Root pseudo-project (M10) has no Files view — treated as not-found.
+  const repo = (id: string) =>
+    id === ROOT_PROJECT_ID ? undefined : projectRegistry.getPath(id);
 
   app.get<{ Params: { id: string }; Querystring: { path?: string } }>(
     "/projects/:id/tree",

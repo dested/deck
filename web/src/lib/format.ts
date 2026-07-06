@@ -26,6 +26,14 @@ export function fmtUsd(n: number): string {
   return `$${Math.round(n / 1000)}k`;
 }
 
+// Fine-grained USD for tiny AI-call costs (haiku prices are fractions of a
+// cent): "$0", "$0.0021", "$0.42". Falls back to fmtUsd above 1¢.
+export function fmtUsdMicro(n: number): string {
+  if (!n) return "$0";
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  return fmtUsd(n);
+}
+
 // Compact token counts: "0", "934", "12.9k", "1.2M", "3.4B".
 export function fmtTokens(n: number): string {
   if (n < 1000) return `${n}`;

@@ -46,8 +46,9 @@ export function Sidebar() {
   const lastOpenedAt = useUIStore((s) => s.lastOpenedAt);
   const goHome = useUIStore((s) => s.goHome);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
-  const costsOpen = useUIStore((s) => s.costsOpen);
-  const setCostsOpen = useUIStore((s) => s.setCostsOpen);
+  const costsOpen = useUIStore((s) => s.topView === "costs");
+  const setCostsOpen = (b: boolean) =>
+    useUIStore.getState().setTopView(b ? "costs" : null);
   const { data: cost } = useCostReport();
 
   const [showHidden, setShowHidden] = useState(false);

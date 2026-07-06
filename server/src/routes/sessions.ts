@@ -19,6 +19,7 @@ export async function registerSessionRoutes(app: FastifyInstance) {
       groupId?: string;
       claudeArgs?: string[];
       command?: string;
+      initialPrompt?: string;
     };
   }>("/sessions", async (req, reply) => {
     try {
@@ -68,6 +69,12 @@ export async function registerSessionRoutes(app: FastifyInstance) {
       return { ok: true };
     },
   );
+
+  // M8: clear the unread flag (answering/opening from the Inbox card).
+  app.post<{ Params: { id: string } }>("/sessions/:id/read", async (req) => {
+    sessionManager.clearUnread(req.params.id);
+    return { ok: true };
+  });
 
   app.post<{
     Params: { id: string };

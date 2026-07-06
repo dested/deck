@@ -10,6 +10,9 @@ interface RawConfig {
   defaultShell?: string;
   claudeBin?: string;
   webstormBin?: string;
+  anthropicApiKey?: string;
+  // M14: optional scheduled digest time, "HH:MM" 24h local. null/absent = off.
+  digestAt?: string;
 }
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
@@ -41,6 +44,16 @@ export const config = {
       : path.join(home, ".claude", "projects"),
   deckStateDir: path.join(home, ".deck"),
   deckStateFile: path.join(home, ".deck", "state.json"),
+  // M7: scratch cwd for Deck's own `claude -p` calls, kept OUTSIDE `root` so
+  // their transcripts don't surface as external agent cards.
+  aiScratchDir: path.join(home, ".deck", "ai"),
+  aiUsageFile: path.join(home, ".deck", "ai-usage.jsonl"),
+  // M14: written digests live here.
+  digestsDir: path.join(home, ".deck", "digests"),
+  // M9: FTS index of every transcript on the machine.
+  searchDbFile: path.join(home, ".deck", "search.db"),
+  anthropicApiKey: raw.anthropicApiKey ?? null,
+  digestAt: raw.digestAt ?? null,
   defaultShell: raw.defaultShell ?? "pwsh.exe",
   claudeBinOverride: raw.claudeBin ?? null,
   // JetBrains Toolbox puts a `webstorm` shell script on PATH; overridable.

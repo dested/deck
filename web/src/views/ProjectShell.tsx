@@ -8,15 +8,18 @@ import {
   ChevronDown,
   GitBranch,
   Files,
+  BookOpen,
   X,
   Plus,
   PanelLeft,
   Code2,
+  MonitorPlay,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { api } from "../lib/api";
-import { spawnSession, closeSession } from "../lib/sessions";
+import { spawnSession, closeSession, displayTitle } from "../lib/sessions";
 import { eventsClient } from "../lib/ws";
 import { useProjectsStore } from "../stores/projectsStore";
 import { useSessionsStore } from "../stores/sessionsStore";
@@ -38,25 +41,50 @@ import {
 import { AgentsTab } from "../components/project/AgentsTab";
 import { GitTab } from "../components/git/GitTab";
 import { FilesTab } from "../components/project/FilesTab";
+import { NotesTab } from "../components/project/NotesTab";
+import { PreviewTab } from "../components/project/PreviewTab";
+import { StackTab } from "../components/project/StackTab";
 import { SessionView } from "./SessionView";
 
 const VIEW_META: Record<ProjectViewKind, { label: string; icon: LucideIcon }> = {
   agents: { label: "Agents", icon: Bot },
+  notes: { label: "Notes", icon: BookOpen },
+  preview: { label: "Preview", icon: MonitorPlay },
+  stack: { label: "Stack", icon: Layers },
   git: { label: "Git", icon: GitBranch },
   files: { label: "Files", icon: Files },
 };
+
+const NORMAL_VIEWS: ProjectViewKind[] = [
+  "agents",
+  "notes",
+  "preview",
+  "stack",
+  "git",
+  "files",
+];
+const ROOT_VIEWS: ProjectViewKind[] = ["agents"];
 
 export function ProjectShell({ projectId }: { projectId: string }) {
   const project = useProjectsStore((s) => s.byId[projectId]);
   const tabState = useUIStore((s) => s.projectTabs[projectId]);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const ensureProjectViews = useUIStore((s) => s.ensureProjectViews);
+  const isRoot = project?.kind === "root";
 
-  // Keep this project's repo watcher + live git status running while it's open.
+  // M10: root has no git watcher. Others keep their repo watcher + live status.
   useEffect(() => {
+    if (isRoot) return;
     eventsClient.subscribe([`git:${projectId}`]);
     return () => eventsClient.unsubscribe([`git:${projectId}`]);
-  }, [projectId]);
+  }, [projectId, isRoot]);
+
+  // M16/M10: make sure the tab strip has the right view tabs for this kind
+  // (adds "notes" to older projects; keeps root to agents-only).
+  useEffect(() => {
+    ensureProjectViews(projectId, isRoot ? ROOT_VIEWS : NORMAL_VIEWS);
+  }, [projectId, isRoot, ensureProjectViews]);
 
   const { data: detail, isError, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -93,12 +121,12 @@ export function ProjectShell({ projectId }: { projectId: string }) {
       {/* Header strip */}
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-hair px-5">
         <span className="text-[14px] font-semibold text-t1">{p.name}</span>
-        {p.branch && (
+        {!isRoot && p.branch && (
           <span className="mono rounded-[4px] bg-raised px-1.5 py-0.5 text-[11px] text-t2">
             {p.branch}
           </span>
         )}
-        {p.dirtyCount != null && p.dirtyCount > 0 && (
+        {!isRoot && p.dirtyCount != null && p.dirtyCount > 0 && (
           <span className="mono text-[11px] text-t2">{p.dirtyCount} changed</span>
         )}
         <span className="mono text-[11px] text-t3">{relTime(p.activityAt)}</span>
@@ -138,13 +166,15 @@ export function ProjectShell({ projectId }: { projectId: string }) {
           >
             <FolderOpen size={14} /> Explorer
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => api.openInWebstorm(projectId)}
-          >
-            <Code2 size={14} /> WebStorm
-          </Button>
+          {!isRoot && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => api.openInWebstorm(projectId)}
+            >
+              <Code2 size={14} /> WebStorm
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -181,6 +211,15 @@ export function ProjectShell({ projectId }: { projectId: string }) {
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab?.kind === "view" && activeTab.view === "agents" && (
           <AgentsTab projectId={projectId} />
+        )}
+        {activeTab?.kind === "view" && activeTab.view === "notes" && (
+          <NotesTab projectId={projectId} />
+        )}
+        {activeTab?.kind === "view" && activeTab.view === "preview" && (
+          <PreviewTab projectId={projectId} />
+        )}
+        {activeTab?.kind === "view" && activeTab.view === "stack" && (
+          <StackTab projectId={projectId} />
         )}
         {activeTab?.kind === "view" && activeTab.view === "git" && (
           <GitTab projectId={projectId} />
@@ -340,8 +379,12 @@ function TabButton({
     ) : (
       <Bot size={13} className="shrink-0 text-t3" />
     );
-    text = session?.name ?? "Session";
+    text = session ? displayTitle(session) : "Session";
   }
+  const tabTooltip =
+    session && (session.aiMeta?.summary || session.name)
+      ? [session.aiMeta?.summary, session.name].filter(Boolean).join(" · ")
+      : undefined;
 
   // Closing a session tab CLOSES THE AGENT (kills an owned pty / dismisses an
   // external one) — not just hides the tab. `closeSession` also drops the tab.
@@ -392,6 +435,7 @@ function TabButton({
       }}
       onClick={() => !editing && activateTab(tab.id)}
       onDoubleClick={startRename}
+      title={tabTooltip}
       className={cn(
         "group relative flex h-full min-w-0 max-w-[220px] cursor-default items-center gap-1.5 border-r border-hair px-3 text-[12.5px] transition-colors",
         dropBefore && "border-l-2 border-l-[color:var(--accent)]",

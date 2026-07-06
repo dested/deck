@@ -458,3 +458,69 @@ export async function showFileDiff(
   ]);
   return parseUnifiedDiff(relPath, stdout);
 }
+
+// M13: gather the change context for AI commit-message generation. Staged
+// changes win; otherwise the worktree diff + untracked file list. Truncated to
+// keep the prompt bounded (300 lines/file, 60KB total). Plus recent subjects as
+// a style reference and a short status summary line.
+const AI_MAX_LINES_PER_FILE = 300;
+const AI_MAX_TOTAL = 60 * 1024;
+
+function truncateDiff(diff: string): string {
+  // Split on file boundaries, cap each file's line count.
+  const files = diff.split(/(?=^diff --git )/m);
+  const capped = files.map((f) => {
+    const lines = f.split("\n");
+    if (lines.length <= AI_MAX_LINES_PER_FILE) return f;
+    return (
+      lines.slice(0, AI_MAX_LINES_PER_FILE).join("\n") +
+      `\n…[truncated ${lines.length - AI_MAX_LINES_PER_FILE} lines]`
+    );
+  });
+  let out = capped.join("");
+  if (out.length > AI_MAX_TOTAL) {
+    out = out.slice(0, AI_MAX_TOTAL) + "\n…[truncated]";
+  }
+  return out;
+}
+
+export async function diffForAi(cwd: string): Promise<{
+  diff: string;
+  recentSubjects: string;
+  summary: string;
+  empty: boolean;
+}> {
+  const status = await getStatus(cwd);
+  const hasStaged = status.staged.length > 0;
+  let diff: string;
+  if (hasStaged) {
+    diff = (await runGit(cwd, ["diff", "--cached", "--no-color"], { allowFail: true }))
+      .stdout;
+  } else {
+    diff = (await runGit(cwd, ["diff", "--no-color"], { allowFail: true })).stdout;
+    const untracked = status.unstaged
+      .filter((f) => f.untracked)
+      .map((f) => f.path);
+    if (untracked.length) {
+      diff += `\n\nUntracked (new) files:\n${untracked.join("\n")}`;
+    }
+  }
+  diff = truncateDiff(diff);
+  const recentSubjects = (
+    await runGit(cwd, ["log", "-10", "--pretty=%s"], { allowFail: true })
+  ).stdout.trim();
+  const summary = (
+    await runGit(cwd, ["status", "--porcelain=v2", "--branch"], {
+      allowFail: true,
+    })
+  ).stdout
+    .split("\n")
+    .filter((l) => l.startsWith("# "))
+    .join("\n");
+  return {
+    diff,
+    recentSubjects,
+    summary,
+    empty: diff.trim().length === 0,
+  };
+}

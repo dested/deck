@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   DollarSign,
   Flame,
@@ -8,6 +8,7 @@ import {
   Coins,
   TrendingUp,
   Layers,
+  Sparkles,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { CostReport, ProjectCost, DailyCost } from "@deck/shared";
@@ -15,7 +16,21 @@ import { useCostReport } from "../../lib/useCost";
 import { useProjectsStore } from "../../stores/projectsStore";
 import { useUIStore } from "../../stores/uiStore";
 import { fmtUsd, fmtTokens, relTime } from "../../lib/format";
+import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
+
+// Stable per-model bar colors (tokens §8 palette, mixed toward the accent).
+const MODEL_COLORS = [
+  "var(--accent)",
+  "var(--ok)",
+  "var(--warn)",
+  "#8b7fd0",
+  "#5aa2c4",
+];
+function modelColor(model: string, models: string[]): string {
+  const i = models.indexOf(model);
+  return MODEL_COLORS[i % MODEL_COLORS.length]!;
+}
 
 // The full cost dashboard — all-time spend, the live 5-hour billing window with
 // burn rate, a daily bar chart, and a per-project ranking with per-model
@@ -109,12 +124,78 @@ function Report({ report }: { report: CostReport }) {
         />
       </div>
 
-      {report.activeBlock && <ActiveBlockCard block={report.activeBlock} />}
+      {report.budgets && <BudgetBar report={report} />}
+
+      {report.activeBlock && (
+        <ActiveBlockCard
+          block={report.activeBlock}
+          blockUSD={report.budgets?.blockUSD ?? null}
+        />
+      )}
 
       {report.daily.length > 0 && <DailyChart daily={report.daily} />}
 
-      <ProjectRanking projects={report.projects} />
+      <ProjectRanking projects={report.projects} aiProject={report.aiProject ?? null} />
     </>
+  );
+}
+
+// Month-to-date spend vs the monthly budget, with inline budget editing.
+function BudgetBar({ report }: { report: CostReport }) {
+  const qc = useQueryClient();
+  const monthly = report.budgets?.monthlyUSD ?? null;
+  const [edit, setEdit] = useState<string>(monthly != null ? String(monthly) : "");
+
+  const month = new Date().toISOString().slice(0, 7);
+  const mtd = report.daily
+    .filter((d) => d.date.startsWith(month))
+    .reduce((s, d) => s + d.cost + (d.aiCost ?? 0), 0);
+  const pct = monthly && monthly > 0 ? (mtd / monthly) * 100 : 0;
+  const tint =
+    pct > 100 ? "var(--err)" : pct > 80 ? "var(--warn)" : "var(--accent)";
+
+  const commit = async () => {
+    const v = edit.trim() === "" ? null : Number(edit);
+    if (v !== null && Number.isNaN(v)) return;
+    const next = await api.patchBudgets({ monthlyUSD: v });
+    qc.setQueryData<CostReport>(["cost"], (old) =>
+      old ? { ...old, budgets: next } : old,
+    );
+  };
+
+  return (
+    <div className="rounded-[8px] border border-hair bg-panel p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <DollarSign size={15} className="text-t3" />
+        <span className="text-[13px] font-medium text-t1">Monthly budget</span>
+        <span className="mono ml-auto text-[11px] text-t3">
+          {fmtUsd(mtd)} MTD{monthly ? ` / ${fmtUsd(monthly)}` : ""}
+        </span>
+        <div className="flex items-center gap-1">
+          <span className="text-[11px] text-t3">$</span>
+          <input
+            value={edit}
+            onChange={(e) => setEdit(e.target.value)}
+            onBlur={() => void commit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder="none"
+            className="h-6 w-[64px] rounded-[5px] border border-hair bg-raised px-1.5 text-right text-[11.5px] tabular-nums text-t1 focus:border-hairfocus focus:outline-none"
+          />
+        </div>
+      </div>
+      {monthly ? (
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-raised">
+          <div
+            className="h-full rounded-full"
+            style={{ width: `${Math.min(100, pct)}%`, background: tint }}
+          />
+        </div>
+      ) : (
+        <p className="text-[11px] text-t3">Set a monthly cap to track spend.</p>
+      )}
+    </div>
   );
 }
 
@@ -150,20 +231,43 @@ function StatTile({
 }
 
 // The live Claude 5-hour billing window: how far we are into it, spend so far,
-// burn rate, and the projected total at window close.
-function ActiveBlockCard({ block }: { block: NonNullable<CostReport["activeBlock"]> }) {
-  const now = Date.now();
+// burn rate, and the projected total at window close. Ticks the countdown
+// locally; tints red when the projected total exceeds the block budget.
+function ActiveBlockCard({
+  block,
+  blockUSD,
+}: {
+  block: NonNullable<CostReport["activeBlock"]>;
+  blockUSD: number | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
   const total = Math.max(1, block.endTime - block.startTime);
   const elapsed = Math.min(1, Math.max(0, (now - block.startTime) / total));
   const remainMin = Math.max(0, Math.round((block.endTime - now) / 60000));
+  const projected = block.projection?.totalCost ?? 0;
+  const overBudget = blockUSD != null && projected > blockUSD;
 
   return (
-    <div className="rounded-[8px] border border-hair bg-panel p-4">
+    <div
+      className={cn(
+        "rounded-[8px] border bg-panel p-4",
+        overBudget ? "border-[color:var(--err)]" : "border-hair",
+      )}
+    >
       <div className="mb-3 flex items-center gap-2">
-        <Flame size={15} className="text-warn" />
+        <Flame size={15} className={overBudget ? "text-[color:var(--err)]" : "text-warn"} />
         <span className="text-[13px] font-medium text-t1">
           Active 5-hour window
         </span>
+        {overBudget && (
+          <span className="rounded-[4px] bg-[rgba(215,84,85,0.15)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--err)]">
+            over budget
+          </span>
+        )}
         <span className="mono ml-auto text-[11px] text-t3">
           {remainMin > 0 ? `${remainMin}m left` : "closing"}
         </span>
@@ -229,11 +333,18 @@ function MiniStat({
   );
 }
 
-// Daily spend bar chart (last ~45 days). Pure divs; hover for the exact value.
+// Daily spend, stacked by model (ccusage breakdowns) with Deck-internal AI as a
+// top segment. Pure divs; hover for the exact value.
 function DailyChart({ daily }: { daily: DailyCost[] }) {
-  const days = daily.slice(-45);
-  const max = Math.max(...days.map((d) => d.cost), 0.0001);
-  const windowCost = days.reduce((s, d) => s + d.cost, 0);
+  const days = daily.slice(-30);
+  const dayTotal = (d: DailyCost) => d.cost + (d.aiCost ?? 0);
+  const max = Math.max(...days.map(dayTotal), 0.0001);
+  const windowCost = days.reduce((s, d) => s + dayTotal(d), 0);
+
+  // Legend: distinct models across the window.
+  const models = [
+    ...new Set(days.flatMap((d) => (d.byModel ?? []).map((m) => m.model))),
+  ];
 
   return (
     <div className="rounded-[8px] border border-hair bg-panel p-4">
@@ -245,36 +356,81 @@ function DailyChart({ daily }: { daily: DailyCost[] }) {
         </span>
       </div>
       <div className="flex h-[96px] items-end gap-[3px]">
-        {days.map((d) => (
-          <div
-            key={d.date}
-            title={`${d.date} · ${fmtUsd(d.cost)} · ${fmtTokens(d.totalTokens)} tok`}
-            className="group flex-1 rounded-[2px] transition-colors"
-            style={{
-              height: `${Math.max(2, (d.cost / max) * 100)}%`,
-              minWidth: 3,
-              background: "color-mix(in srgb, var(--accent) 55%, transparent)",
-            }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.background = "var(--accent)")
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background =
-                "color-mix(in srgb, var(--accent) 55%, transparent)")
-            }
-          />
-        ))}
+        {days.map((d) => {
+          const segs = (d.byModel ?? []).filter((m) => m.cost > 0);
+          const ai = d.aiCost ?? 0;
+          const heightPct = (dayTotal(d) / max) * 100;
+          return (
+            <div
+              key={d.date}
+              title={`${d.date} · ${fmtUsd(dayTotal(d))}${ai > 0 ? ` (AI ${fmtUsd(ai)})` : ""} · ${fmtTokens(d.totalTokens)} tok`}
+              className="flex flex-1 flex-col-reverse overflow-hidden rounded-[2px]"
+              style={{ height: `${Math.max(2, heightPct)}%`, minWidth: 3 }}
+            >
+              {segs.length > 0 ? (
+                segs.map((m) => (
+                  <div
+                    key={m.model}
+                    style={{
+                      height: `${(m.cost / dayTotal(d)) * 100}%`,
+                      background: modelColor(m.model, models),
+                    }}
+                  />
+                ))
+              ) : (
+                <div
+                  style={{
+                    height: `${((d.cost / dayTotal(d)) * 100) || 100}%`,
+                    background: "color-mix(in srgb, var(--accent) 55%, transparent)",
+                  }}
+                />
+              )}
+              {ai > 0 && (
+                <div
+                  style={{
+                    height: `${(ai / dayTotal(d)) * 100}%`,
+                    background: "var(--accenttext)",
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
-      <div className="mt-1.5 flex justify-between text-[10px] text-t3">
-        <span className="mono">{days[0]?.date}</span>
-        <span className="mono">{days[days.length - 1]?.date}</span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {models.map((m) => (
+          <span key={m} className="flex items-center gap-1 text-[10px] text-t3">
+            <span
+              className="h-2 w-2 rounded-[2px]"
+              style={{ background: modelColor(m, models) }}
+            />
+            {m.replace("claude-", "")}
+          </span>
+        ))}
+        {days.some((d) => (d.aiCost ?? 0) > 0) && (
+          <span className="flex items-center gap-1 text-[10px] text-t3">
+            <span className="h-2 w-2 rounded-[2px]" style={{ background: "var(--accenttext)" }} />
+            Deck AI
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function ProjectRanking({ projects }: { projects: ProjectCost[] }) {
-  const max = Math.max(...projects.map((p) => p.cost), 0.0001);
+function ProjectRanking({
+  projects,
+  aiProject,
+}: {
+  projects: ProjectCost[];
+  aiProject: ProjectCost | null;
+}) {
+  const setTopView = useUIStore((s) => s.setTopView);
+  const max = Math.max(
+    ...projects.map((p) => p.cost),
+    aiProject?.cost ?? 0,
+    0.0001,
+  );
   return (
     <div className="rounded-[8px] border border-hair bg-panel p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -284,12 +440,27 @@ function ProjectRanking({ projects }: { projects: ProjectCost[] }) {
           {projects.length} projects
         </span>
       </div>
-      {projects.length === 0 ? (
+      {projects.length === 0 && !aiProject ? (
         <div className="py-6 text-center text-[12px] text-t3">
           No attributed project spend yet.
         </div>
       ) : (
         <div className="flex flex-col">
+          {aiProject && (
+            <button
+              onClick={() => setTopView("ai")}
+              className="flex items-center gap-2 border-b border-hair/60 py-2 text-left hover:bg-raised/40"
+            >
+              <Sparkles size={14} className="ml-6 shrink-0 text-accenttext" />
+              <span className="flex-1 text-[13px] text-t1">Deck internal AI</span>
+              <span className="mono shrink-0 text-[11px] text-t3">
+                {fmtTokens(aiProject.totalTokens)} tok · {aiProject.sessionCount} calls
+              </span>
+              <span className="mono w-[64px] shrink-0 text-right text-[13px] font-semibold tabular-nums text-accenttext">
+                {fmtUsd(aiProject.cost)}
+              </span>
+            </button>
+          )}
           {projects.map((p) => (
             <ProjectRow key={p.projectId} project={p} max={max} />
           ))}

@@ -24,6 +24,9 @@ export interface ProjectSummary {
   pinned: boolean;
   hidden: boolean;
   groupId?: string | null; // project group assignment (null/undefined == ungrouped)
+  // M10: "root" is the synthetic pseudo-project for `config.root` itself
+  // (agents + terminals only; no git/files). Optional so old clients degrade.
+  kind?: "normal" | "root";
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -203,6 +206,11 @@ export interface Session {
   unread: boolean;
   title: string | null; // ai-title if present
   stats?: AgentStats | null; // claude sessions with a parsed transcript
+  // M8: last ~12 lines of the terminal when an owned claude session is
+  // `attention` (waiting on a prompt), ANSI-stripped, for the Inbox card.
+  promptTail?: string[] | null;
+  // M12: AI-generated tab title + one-line live summary, refreshed on change.
+  aiMeta?: { title: string; summary: string; at: number } | null;
 }
 
 export interface Group {
@@ -255,6 +263,11 @@ export interface DailyCost {
   date: string; // YYYY-MM-DD
   cost: number;
   totalTokens: number;
+  // M15: Deck-internal AI spend for this day (subset of `cost` is NOT included;
+  // this is a separate synthetic series stacked on top of the ccusage bars).
+  aiCost?: number;
+  // M15: per-model breakdown for this day (ccusage already returns it).
+  byModel?: CostModelBreakdown[];
 }
 
 // The current Claude 5-hour billing window (ccusage `blocks --active`).
@@ -283,6 +296,10 @@ export interface CostReport {
   daily: DailyCost[]; // chronological
   sessions: Record<string, SessionCost>; // by transcript session id
   activeBlock: ActiveBlock | null;
+  // M15: Deck-internal AI usage as a synthetic project row.
+  aiProject?: ProjectCost | null;
+  // M15: spend budgets (echoed from state for the dashboard + inbox alert).
+  budgets?: { monthlyUSD: number | null; blockUSD: number | null };
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +374,9 @@ export type WsServerMsg =
       events: TranscriptEvent[];
     }
   | { t: "session.attention"; sessionId: string; reason: string }
+  | { t: "reviews.updated"; payload: ReviewItem } // M11
+  | { t: "tasks.updated"; payload: TaskCard } // M17
+  | { t: "digest.ready"; name: string } // M14
   | { t: "echo"; data: unknown };
 
 // ---------------------------------------------------------------------------
@@ -382,4 +402,285 @@ export interface DeckClientConfig {
   port: number;
   claudeBin: string | null;
   defaultShell: string;
+}
+
+// ---------------------------------------------------------------------------
+// M7 — AI service layer (usage ledger + admin)
+// ---------------------------------------------------------------------------
+
+export type AiFeatureId =
+  | "blurb"
+  | "tabTitle"
+  | "liveSummary"
+  | "reviewSummary"
+  | "commitMessage"
+  | "promptEnhancer"
+  | "digest"
+  | "runbook" // M18: generate deck.run.json from the repo
+  | "dbQuery"; // M20: natural language -> read-only SQL
+
+export type AiBackend = "claude-cli" | "api";
+
+export interface AiUsageEntry {
+  ts: number;
+  feature: AiFeatureId;
+  model: string;
+  backend: AiBackend;
+  ok: boolean;
+  error?: string;
+  costUSD: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  durationMs: number;
+}
+
+export interface AiFeatureConfigView {
+  feature: AiFeatureId;
+  label: string;
+  enabled: boolean;
+  model: string;
+  dailyBudgetUSD: number;
+  spentTodayUSD: number;
+  callsToday: number;
+  capped: boolean;
+}
+
+export interface AiUsageReport {
+  totalCost: number;
+  days: number;
+  byFeature: Record<string, { calls: number; cost: number; tokens: number }>;
+  byModel: Record<string, { calls: number; cost: number }>;
+  byDay: { date: string; cost: number; calls: number }[];
+  recent: AiUsageEntry[];
+}
+
+export interface AiConfigView {
+  backend: AiBackend;
+  apiKeyPresent: boolean;
+  globalDailyBudgetUSD: number;
+  spentTodayUSD: number;
+  features: AiFeatureConfigView[];
+}
+
+// Result of a single AI completion (returned by POST /ai/test).
+export interface AiResult {
+  text: string;
+  model: string;
+  backend: AiBackend;
+  costUSD: number;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// M9 — transcript search
+// ---------------------------------------------------------------------------
+
+export interface SearchHit {
+  sessionId: string;
+  projectId: string;
+  title: string | null;
+  snippet: string; // sentinel-wrapped match spans (client renders <mark>)
+  ts: number;
+  eventIdx: number;
+  kind: string;
+}
+
+// ---------------------------------------------------------------------------
+// M11 — review queue ("what changed while I was away")
+// ---------------------------------------------------------------------------
+
+export interface ReviewItem {
+  id: string; // == sessionId
+  sessionId: string;
+  projectId: string;
+  ts: number;
+  files: string[];
+  summary: string | null;
+  dismissed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// M13 — prompt recipes
+// ---------------------------------------------------------------------------
+
+export interface Recipe {
+  id: string;
+  name: string;
+  body: string;
+  tags: string[];
+  createdAt: number;
+  lastUsedAt: number | null;
+  useCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// M17 — task board
+// ---------------------------------------------------------------------------
+
+export type TaskStatus = "backlog" | "queued" | "done" | "linked";
+
+export interface TaskCard {
+  id: string;
+  title: string;
+  body: string;
+  projectId: string;
+  recipeId: string | null;
+  sessionId: string | null;
+  createdAt: number;
+  startedAt: number | null;
+  doneAt: number | null;
+  order: number;
+  status: TaskStatus;
+}
+
+export interface AutopilotConfig {
+  enabled: boolean;
+  maxRunning: number;
+}
+
+// ---------------------------------------------------------------------------
+// M18 — runbook (deck.run.json: how to run/test a project) + embedded preview
+// ---------------------------------------------------------------------------
+
+export interface Runbook {
+  // The dev server: command to start it and where it serves. `url` wins over
+  // `port` for the preview iframe; port alone implies http://localhost:<port>.
+  dev?: { command: string; port?: number; url?: string };
+  test?: { command: string };
+  install?: { command: string };
+  notes?: string;
+}
+
+export interface RunbookInfo {
+  runbook: Runbook;
+  // true when deck.run.json exists at the repo root (runbook == its contents);
+  // false means `runbook` is Deck's detection fallback (scripts/ports/runner).
+  hasFile: boolean;
+}
+
+export interface RunbookStatus {
+  port: number | null; // effective preview port (file > live-detected > static)
+  url: string | null;
+  listening: boolean; // TCP probe of the effective port
+  livePorts: number[]; // portWatcher's live ports for this project
+}
+
+// ---------------------------------------------------------------------------
+// M19 — system suite (dev processes + listening ports, killable)
+// ---------------------------------------------------------------------------
+
+export interface SystemProcess {
+  pid: number;
+  ppid: number;
+  name: string; // node.exe / bun.exe / python.exe …
+  commandLine: string | null;
+  memoryMB: number;
+  startedAt: number | null; // epoch ms
+  projectId: string | null; // matched by command-line path
+  ports: number[]; // listening ports owned by this pid
+  orphaned: boolean; // parent process no longer exists
+}
+
+export interface SystemPortEntry {
+  port: number;
+  pid: number;
+  processName: string | null;
+  projectId: string | null;
+}
+
+export interface SystemOverview {
+  generatedAt: number;
+  processes: SystemProcess[]; // dev runtimes (node/bun/python/deno)
+  ports: SystemPortEntry[]; // ALL listening TCP ports (user range)
+}
+
+// ---------------------------------------------------------------------------
+// M20 — env intelligence + database panel
+// ---------------------------------------------------------------------------
+
+// Rough classification of an env key so big files scan visually.
+export type EnvVarCategory =
+  | "ai"
+  | "database"
+  | "auth"
+  | "payments"
+  | "storage"
+  | "email"
+  | "urls"
+  | "config"
+  | "other";
+
+export interface EnvVar {
+  key: string;
+  masked: string; // display-safe value; reveal endpoint returns the real one
+  hasValue: boolean;
+  category?: EnvVarCategory; // optional so pre-upgrade servers degrade
+}
+
+export interface EnvFile {
+  path: string; // repo-relative, forward-slash (e.g. ".env", "server/.env")
+  vars: EnvVar[];
+  // Monorepo grouping: name of the nearest enclosing package.json (or its
+  // relative dir when unnamed); null = the repo root itself.
+  workspace?: string | null;
+}
+
+export type StackBadge =
+  | "anthropic"
+  | "openai"
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "prisma"
+  | "drizzle"
+  | "redis"
+  | "supabase"
+  | "stripe"
+  | "s3";
+
+export interface StackReport {
+  projectId: string;
+  files: EnvFile[];
+  badges: StackBadge[];
+  // First DATABASE_URL-ish var found (postgres wins), for the DB panel.
+  databaseUrl: {
+    file: string;
+    key: string;
+    masked: string;
+    provider: "postgres" | "mysql" | "sqlite" | "other";
+  } | null;
+  prismaSchemaPath: string | null; // repo-relative, when a schema.prisma exists
+}
+
+export interface DbTable {
+  schema: string;
+  name: string;
+  rows: number | null; // planner estimate; null = never analyzed
+}
+
+export interface DbOverview {
+  ok: boolean;
+  error?: string;
+  serverVersion?: string;
+  database?: string;
+  tables: DbTable[];
+}
+
+export interface DbQueryResult {
+  sql: string;
+  columns: string[];
+  rows: unknown[][];
+  rowCount: number;
+  truncated: boolean;
+}
+
+export interface StudioStatus {
+  running: boolean;
+  port: number | null;
+  url: string | null;
+  error?: string;
 }

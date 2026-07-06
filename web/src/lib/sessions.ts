@@ -3,11 +3,22 @@ import { api } from "./api";
 import { useUIStore } from "../stores/uiStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 
+// The auto-generated default session name, e.g. "myproj cc·a1b2".
+const DEFAULT_NAME_RE = / (sh|cc)·[0-9a-f]{4}$/;
+
+// M12 title precedence: a user (or external ai-title) rename wins; otherwise the
+// AI tab title; otherwise the default name.
+export function displayTitle(s: Session): string {
+  if (!DEFAULT_NAME_RE.test(s.name)) return s.name;
+  return s.aiMeta?.title || s.name;
+}
+
 // Central spawn helper: request notification permission on first spawn (§11),
 // create the session, and open it as a tab.
 export async function spawnSession(
   projectId: string,
   kind: "claude" | "shell",
+  opts?: { initialPrompt?: string; name?: string },
 ) {
   // Request notification permission in the background — never block the spawn
   // on the browser's permission prompt.
@@ -18,7 +29,12 @@ export async function spawnSession(
       /* ignore */
     }
   }
-  const s = await api.createSession({ projectId, kind });
+  const s = await api.createSession({
+    projectId,
+    kind,
+    initialPrompt: opts?.initialPrompt,
+    name: opts?.name,
+  });
   // Seed the store immediately so its tab renders live right away (ws keeps it
   // fresh) instead of briefly falling through to the restore view.
   useSessionsStore.getState().upsert(s);

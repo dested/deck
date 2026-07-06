@@ -114,6 +114,12 @@ class EventHub {
   get clientCount() {
     return this.clients.size;
   }
+
+  // Does any client currently subscribe to this topic? (M12 bounds live-meta
+  // spend to sessions with an open tab/feed via their transcript: topic.)
+  hasSubscribers(topic: string): boolean {
+    return (this.topicRefs.get(topic) ?? 0) > 0;
+  }
 }
 
 export const eventHub = new EventHub();

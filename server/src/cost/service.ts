@@ -9,6 +9,8 @@ import type {
 } from "@deck/shared";
 import { config } from "../config.js";
 import { transcriptRegistry } from "../transcripts/registry.js";
+import { usageLedger } from "../ai/usage.js";
+import { getState } from "../state.js";
 
 // ============================================================================
 // Cost dashboard data, sourced from `ccusage` (which reads the same Claude Code
@@ -218,13 +220,24 @@ async function buildReport(): Promise<CostReport> {
   let totalTokens = 0;
   for (const d of dailyRes?.daily ?? []) {
     if (!d.period) continue;
-    const { cost, tokens } = accumulate(new Map(), d.modelBreakdowns);
+    const perModel = new Map<string, CostModelBreakdown>();
+    const { cost, tokens } = accumulate(perModel, d.modelBreakdowns);
     if (cost === 0 && tokens === 0) continue;
-    daily.push({ date: d.period, cost, totalTokens: tokens });
+    daily.push({
+      date: d.period,
+      cost,
+      totalTokens: tokens,
+      // M15: per-model split (ccusage already returns it) for stacked bars.
+      byModel: [...perModel.values()].sort((a, b) => b.cost - a.cost),
+    });
     totalCost += cost;
     totalTokens += tokens;
   }
   daily.sort((a, b) => a.date.localeCompare(b.date));
+
+  // M15: fold Deck-internal AI spend into each day (a separate stacked series).
+  const aiDaily = usageLedger.dailyCostMap(365);
+  for (const row of daily) row.aiCost = aiDaily.get(row.date) ?? 0;
 
   // ---- Active 5-hour billing block (live burn rate) ----
   let activeBlock: ActiveBlock | null = null;
@@ -257,6 +270,28 @@ async function buildReport(): Promise<CostReport> {
     };
   }
 
+  // M15: Deck-internal AI usage as a synthetic project row (last 30 days).
+  const aiReport = usageLedger.usageReport(30);
+  const aiTokens = Object.values(aiReport.byFeature).reduce(
+    (s, f) => s + f.tokens,
+    0,
+  );
+  const aiCalls = Object.values(aiReport.byFeature).reduce(
+    (s, f) => s + f.calls,
+    0,
+  );
+  const aiProject: ProjectCost | null =
+    aiReport.totalCost > 0 || aiCalls > 0
+      ? {
+          projectId: "__deck_ai__",
+          cost: aiReport.totalCost,
+          totalTokens: aiTokens,
+          sessionCount: aiCalls,
+          byModel: [],
+          lastActivity: null,
+        }
+      : null;
+
   return {
     generatedAt: Date.now(),
     available: true,
@@ -266,6 +301,8 @@ async function buildReport(): Promise<CostReport> {
     daily,
     sessions,
     activeBlock,
+    aiProject,
+    budgets: { ...getState().budgets },
   };
 }
 
