@@ -14,7 +14,14 @@ import { screenshotService } from "../projects/screenshots.js";
 import { aiComplete } from "../ai/client.js";
 import { getState, updateState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
-import { config } from "../config.js";
+import {
+  config,
+  fileRoots,
+  getRuntimeExtraRoots,
+  setRuntimeExtraRoots,
+} from "../config.js";
+import { resyncRootWatcher, syncGitHeartbeat } from "../projects/watcher.js";
+import path from "node:path";
 
 // Broadcast the full project-group list on any group mutation. Clients keep a
 // small store of groups; project->group assignment rides on the project summary.
@@ -195,6 +202,66 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       return { ok: true };
     },
   );
+
+  // ----- Project roots (UI-managed extra scan roots) -----
+  // Re-point the scanner + watchers at the current config.roots and rescan, so
+  // an added/removed root takes effect immediately (no server restart).
+  function reloadRoots() {
+    setRuntimeExtraRoots(getState().extraRoots);
+    resyncRootWatcher();
+    projectRegistry.rescan();
+    syncGitHeartbeat();
+    void projectRegistry.refreshTopGit(30);
+  }
+
+  function isLockedRoot(norm: string): boolean {
+    const lc = norm.toLowerCase();
+    return (
+      lc === config.root.toLowerCase() ||
+      fileRoots.some((r) => r.toLowerCase() === lc)
+    );
+  }
+
+  app.post<{ Body: { path?: string } }>("/roots", async (req, reply) => {
+    const raw = (req.body?.path ?? "").trim();
+    if (!raw) return reply.code(400).send({ error: "path required" });
+    const norm = path.win32.resolve(raw);
+    let stat: fs.Stats | null = null;
+    try {
+      stat = fs.statSync(norm);
+    } catch {
+      /* missing */
+    }
+    if (!stat || !stat.isDirectory())
+      return reply.code(400).send({ error: "not an existing folder" });
+    const lc = norm.toLowerCase();
+    if (
+      isLockedRoot(norm) ||
+      getRuntimeExtraRoots().some((r) => r.toLowerCase() === lc)
+    )
+      return reply.code(409).send({ error: "already a root" });
+    updateState((s) => {
+      s.extraRoots = [...s.extraRoots.filter((r) => r.toLowerCase() !== lc), norm];
+    });
+    reloadRoots();
+    return { ok: true, roots: config.roots, extraRoots: getRuntimeExtraRoots() };
+  });
+
+  app.delete<{ Body: { path?: string } }>("/roots", async (req, reply) => {
+    const norm = path.win32.resolve((req.body?.path ?? "").trim());
+    const lc = norm.toLowerCase();
+    if (isLockedRoot(norm))
+      return reply
+        .code(400)
+        .send({ error: "this root is set in deck.config.json" });
+    if (!getRuntimeExtraRoots().some((r) => r.toLowerCase() === lc))
+      return reply.code(404).send({ error: "not a UI root" });
+    updateState((s) => {
+      s.extraRoots = s.extraRoots.filter((r) => r.toLowerCase() !== lc);
+    });
+    reloadRoots();
+    return { ok: true, roots: config.roots, extraRoots: getRuntimeExtraRoots() };
+  });
 
   // ----- Project groups (sidebar) -----
   app.get("/project-groups", async () => getState().projectGroups);

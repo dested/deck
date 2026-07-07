@@ -102,6 +102,11 @@ interface UIState {
   gitFocusPath: { projectId: string; path: string } | null;
   // M13: last-used AI commit-message style (persisted).
   commitStyle: "terse" | "conventional" | "verbose";
+  // M17v3: the task open in the board's edit side-panel (transient).
+  taskPanelId: string | null;
+  // M17v3: collapsed pile groups on the focus stack, keyed by projectId /
+  // "__life__" / "__none__" (persisted — your pile folds stay folded).
+  taskGroupsCollapsed: Record<string, boolean>;
 
   setSearch: (s: string) => void;
   toggleSidebar: () => void;
@@ -119,6 +124,8 @@ interface UIState {
   setFeedJump: (j: { sessionId: string; eventIdx: number } | null) => void;
   setGitFocusPath: (j: { projectId: string; path: string } | null) => void;
   setCommitStyle: (s: "terse" | "conventional" | "verbose") => void;
+  setTaskPanel: (id: string | null) => void;
+  toggleTaskGroup: (key: string) => void;
   requestFile: (projectId: string, path: string) => void;
   consumeFile: (projectId: string) => string | null;
 
@@ -167,6 +174,8 @@ export const useUIStore = create<UIState>()(
       feedJump: null,
       gitFocusPath: null,
       commitStyle: "terse",
+      taskPanelId: null,
+      taskGroupsCollapsed: {},
 
       setSearch: (s) => set({ search: s }),
       toggleSidebar: () =>
@@ -198,6 +207,14 @@ export const useUIStore = create<UIState>()(
       setFeedJump: (j) => set({ feedJump: j }),
       setGitFocusPath: (j) => set({ gitFocusPath: j }),
       setCommitStyle: (s) => set({ commitStyle: s }),
+      setTaskPanel: (id) => set({ taskPanelId: id }),
+      toggleTaskGroup: (key) =>
+        set((st) => ({
+          taskGroupsCollapsed: {
+            ...st.taskGroupsCollapsed,
+            [key]: !st.taskGroupsCollapsed[key],
+          },
+        })),
       requestFile: (projectId, path) =>
         set((st) => ({ pendingFile: { ...st.pendingFile, [projectId]: path } })),
       consumeFile: (projectId) => {
@@ -469,6 +486,7 @@ export const useUIStore = create<UIState>()(
         terminalFontSize: st.terminalFontSize,
         notificationsEnabled: st.notificationsEnabled,
         commitStyle: st.commitStyle,
+        taskGroupsCollapsed: st.taskGroupsCollapsed,
       }),
     },
   ),

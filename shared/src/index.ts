@@ -13,7 +13,7 @@ export interface AheadBehind {
 }
 
 export interface ProjectSummary {
-  id: string; // folder name, e.g. "scenebeans2"
+  id: string; // folder name, e.g. "my-app"
   path: string; // absolute win32 path
   name: string; // display name (== id for now)
   activityAt: number; // epoch ms
@@ -403,11 +403,18 @@ export type WsTermServerMsg =
 
 export interface DeckClientConfig {
   root: string;
-  /** All scanned project roots: [root, ...deck.config.json `roots`]. */
+  /** All scanned project roots: [root, ...deck.config.json `roots`, ...extraRoots]. */
   roots: string[];
+  /** Roots declared in deck.config.json (read-only in the UI). */
+  fileRoots: string[];
+  /** Extra roots added from the UI (removable; persisted in state.json). */
+  extraRoots: string[];
   port: number;
   claudeBin: string | null;
   defaultShell: string;
+  /** True when the server runs under the supervisor, so the UI "restart
+   * backend" button will actually respawn it (vs. a bare dev run). */
+  supervised: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +596,11 @@ export interface Recipe {
 // thing being worked on (soft limit, UI nags past 1). Done = wins pile
 // (fades after 7d client-side, auto-pruned after 30d server-side).
 export type TaskStatus = "inbox" | "next" | "now" | "done";
+
+// The non-code bucket ("pay bills", errands). Not a real project — a sentinel
+// TaskCard.projectId the client renders with its own first-class identity.
+// Never a valid id for project routes; AI prompt drafting rejects it.
+export const LIFE_PROJECT_ID = "__life__";
 
 // An image attached to a card (pasted screenshot, dropped file). The bytes
 // live on disk (~/.deck/task-images/<taskId>-<id>.<ext>); this is the index

@@ -24,10 +24,12 @@ function guard(w: FSWatcher, name: string): FSWatcher {
 // (depth 0)
 // ---------------------------------------------------------------------------
 let rootWatcher: FSWatcher | null = null;
+// key (lowercased path) -> original-cased path actually handed to chokidar.
+const watchedRoots = new Map<string, string>();
 
 function startRootTier() {
   rootWatcher = guard(
-    chokidar.watch(config.roots, {
+    chokidar.watch([], {
       depth: 0,
       ignoreInitial: true,
       persistent: true,
@@ -40,6 +42,27 @@ function startRootTier() {
   }, 400);
   rootWatcher.on("addDir", rescan);
   rootWatcher.on("unlinkDir", rescan);
+  resyncRootWatcher();
+}
+
+// Re-point the root tier at the current config.roots. Called on boot and after a
+// UI root add/remove so new roots are watched (and dropped ones unwatched)
+// without a server restart.
+export function resyncRootWatcher() {
+  if (!rootWatcher) return;
+  const wanted = new Map(config.roots.map((r) => [r.toLowerCase(), r]));
+  for (const [key, root] of wanted) {
+    if (!watchedRoots.has(key)) {
+      rootWatcher.add(root);
+      watchedRoots.set(key, root);
+    }
+  }
+  for (const [key, root] of [...watchedRoots]) {
+    if (!wanted.has(key)) {
+      rootWatcher.unwatch(root);
+      watchedRoots.delete(key);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

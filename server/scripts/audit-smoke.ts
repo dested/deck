@@ -53,9 +53,9 @@ async function main() {
   console.log("[2] sanitizer OK");
 
   // 3 — real model call (mirrors ai/client runCli, minus ledger/state writes)
-  // getClaudeBin() resolves lazily inside a booted server; fall back for
-  // standalone runs (`where claude` on this machine).
-  const bin = ptyManager.getClaudeBin() ?? "C:\\nvm4w\\nodejs\\claude.cmd";
+  // getClaudeBin() resolves lazily inside a booted server; fall back to the
+  // PATH shim for standalone runs.
+  const bin = ptyManager.getClaudeBin() ?? "claude.cmd";
   const full = `${system}\n\n${prompt}\n\nOutput ONLY valid JSON — no prose, no code fences.`;
   const out = await new Promise<string>((resolve, reject) => {
     const child = execFile(

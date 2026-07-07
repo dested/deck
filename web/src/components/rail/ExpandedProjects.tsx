@@ -9,11 +9,12 @@ import {
   SquareTerminal,
   Pencil,
   Globe,
-  Kanban,
+  ListTodo,
+  Star,
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
-import type { ProjectSummary, Session } from "@deck/shared";
+import type { ProjectSummary, Session, TaskCard } from "@deck/shared";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { relTime } from "../../lib/format";
@@ -45,7 +46,7 @@ interface CardData {
   exited: Session[]; // owned, nonzero exit code
   idle: Session[];
   reviews: number;
-  nowTasks: number;
+  nowTask: TaskCard | null; // the project's one thing (lowest order wins)
   nextTasks: number;
   ports: number[];
 }
@@ -75,7 +76,7 @@ export function ExpandedProjects({ railIds }: { railIds: string[] }) {
       if (!d) {
         d = {
           attention: [], working: [], finished: [], exited: [], idle: [],
-          reviews: 0, nowTasks: 0, nextTasks: 0,
+          reviews: 0, nowTask: null, nextTasks: 0,
           ports: livePorts[pid] ?? [],
         };
         map.set(pid, d);
@@ -103,8 +104,10 @@ export function ExpandedProjects({ railIds }: { railIds: string[] }) {
     }
     for (const t of Object.values(tasks)) {
       if (!t.projectId || !map.has(t.projectId)) continue;
-      if (t.status === "now") ensure(t.projectId).nowTasks += 1;
-      else if (t.status === "next") ensure(t.projectId).nextTasks += 1;
+      const d = ensure(t.projectId);
+      if (t.status === "now") {
+        if (!d.nowTask || t.order < d.nowTask.order) d.nowTask = t;
+      } else if (t.status === "next") d.nextTasks += 1;
     }
     for (const d of map.values()) {
       // Stable row order: attention by how long it's been waiting, the rest by
@@ -275,7 +278,7 @@ function ProjectCard({
           )}
 
           {/* Footer strip: reviews / dev server / tasks — only when there's something */}
-          {(d.reviews > 0 || d.ports.length > 0 || d.nowTasks + d.nextTasks > 0) && (
+          {(d.reviews > 0 || d.ports.length > 0 || d.nowTask || d.nextTasks > 0) && (
             <div className="flex flex-wrap items-center gap-1 border-t border-hair px-2 py-1.5">
               {d.reviews > 0 && (
                 <Chip
@@ -294,14 +297,22 @@ function ProjectCard({
                   <Globe size={10} /> :{port}
                 </Chip>
               ))}
-              {d.nowTasks + d.nextTasks > 0 && (
+              {/* The project's NOW task by name — the one thing, not a count */}
+              {d.nowTask && (
                 <Chip
-                  title={`${d.nowTasks} now · ${d.nextTasks} next on the task board`}
+                  title={`Now: ${d.nowTask.title} — open Tasks`}
                   onClick={() => onOpen("tasks")}
                 >
-                  <Kanban size={10} />
-                  {d.nowTasks > 0 ? ` ${d.nowTasks}★` : ""}
-                  {d.nextTasks > 0 ? ` ${d.nextTasks}⋯` : ""}
+                  <Star size={10} className="text-accenttext" />
+                  <span className="max-w-[200px] truncate text-t2">{d.nowTask.title}</span>
+                </Chip>
+              )}
+              {d.nextTasks > 0 && (
+                <Chip
+                  title={`${d.nextTasks} queued on deck — open Tasks`}
+                  onClick={() => onOpen("tasks")}
+                >
+                  <ListTodo size={10} /> {d.nextTasks}
                 </Chip>
               )}
             </div>

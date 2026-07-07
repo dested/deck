@@ -69,6 +69,18 @@ const enc = encodeURIComponent;
 
 export const api = {
   config: () => get<DeckClientConfig>("/api/config"),
+  health: () => get<{ ok: boolean; time: number }>("/api/health"),
+  restartServer: () => post<{ ok: true }>("/api/system/restart"),
+  addRoot: (path: string) =>
+    post<{ ok: true; roots: string[]; extraRoots: string[] }>("/api/roots", {
+      path,
+    }),
+  removeRoot: (path: string) =>
+    req<{ ok: true; roots: string[]; extraRoots: string[] }>(
+      "DELETE",
+      "/api/roots",
+      { path },
+    ),
 
   projects: () => get<ProjectSummary[]>("/api/projects"),
   project: (id: string) => get<ProjectDetail>(`/api/projects/${enc(id)}`),

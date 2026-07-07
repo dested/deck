@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { config } from "./config.js";
+import { config, setRuntimeExtraRoots } from "./config.js";
 import type {
   Group,
   ReviewItem,
@@ -62,6 +62,10 @@ export interface DeckState {
   budgets: { monthlyUSD: number | null; blockUSD: number | null };
   // M17v2: personal task-board cards (cap 200; done pruned after 30d).
   tasks: TaskCard[];
+  // Extra project roots added from the UI (besides `config.root` and any
+  // deck.config.json `roots`). Seeds config.setRuntimeExtraRoots on boot so they
+  // are scanned without a restart. Normalized win32 absolute paths.
+  extraRoots: string[];
   prefs: {
     sidebarWidth: number;
     terminalFontSize: number;
@@ -89,6 +93,7 @@ const DEFAULT_STATE: DeckState = {
   recipes: [],
   budgets: { monthlyUSD: null, blockUSD: null },
   tasks: [],
+  extraRoots: [],
   prefs: {
     sidebarWidth: 264,
     terminalFontSize: 13,
@@ -162,11 +167,16 @@ export function loadState(): DeckState {
       current.reviews = parsed.reviews ?? {};
       current.recipes = parsed.recipes ?? [];
       current.tasks = (parsed.tasks ?? []).map(migrateTask);
+      current.extraRoots = Array.isArray(parsed.extraRoots)
+        ? parsed.extraRoots.filter((r): r is string => typeof r === "string")
+        : [];
     }
   } catch (err) {
     console.warn("[state] failed to load, using defaults:", err);
     current = structuredClone(DEFAULT_STATE);
   }
+  // Push the persisted UI roots into config so the scanner sees them this boot.
+  setRuntimeExtraRoots(current.extraRoots);
   return current;
 }
 

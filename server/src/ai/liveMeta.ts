@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import type { TranscriptEvent } from "@deck/shared";
 import { sessionManager } from "../sessions/manager.js";
 import { transcriptRegistry } from "../transcripts/registry.js";
@@ -34,6 +33,9 @@ const PROMPT =
 const lastSig = new Map<string, string>();
 // Per-session wall-clock of the last label, for the cooldown above.
 const lastLabelAt = new Map<string, number>();
+// Shell terminals get labelled exactly ONCE (their name doesn't drift like a
+// claude session's does) — ids that already carry a title are never re-run.
+const terminalDone = new Set<string>();
 
 let timer: NodeJS.Timeout | null = null;
 
@@ -127,20 +129,30 @@ async function tick() {
     if (s.status === "exited") continue;
     const rec = ptyManager.get(s.id);
     if (!rec) continue;
-    let sig: string;
-    let context: string;
-    if (rec.kind === "claude" && rec.transcriptSessionId) {
-      const parsed = transcriptRegistry.getParsed(rec.transcriptSessionId);
-      if (!parsed || parsed.events.length === 0) continue;
-      sig = transcriptSig(parsed.events);
-      context = renderClaudeContext(parsed.events, parsed.firstPrompt);
-    } else {
-      const tail = ptyManager.tail(s.id, 4096).replace(ANSI_RE, "");
-      sig = crypto.createHash("sha1").update(tail.slice(-4096)).digest("hex");
-      context = tail.slice(-2048);
+
+    // Shell terminals: label ONCE, then never touch again. A terminal's purpose
+    // doesn't drift the way a claude session's does, so a single title (once
+    // there's some output to name it by) is enough — no ongoing polling/cost.
+    if (rec.kind !== "claude" || !rec.transcriptSessionId) {
+      if (terminalDone.has(s.id)) continue;
+      const context = ptyManager.tail(s.id, 4096).replace(ANSI_RE, "").slice(-2048);
+      if (!context.trim()) continue; // no output yet — retry next tick, don't burn the one shot
+      await labelSession(context, (meta) => {
+        sessionManager.setAiMeta(s.id, meta);
+        terminalDone.add(s.id); // mark done only on a real label, so a failed shot retries
+      });
+      continue;
     }
+
+    // Claude sessions: keep tracking what's happening (change-gated + cooldown).
+    const parsed = transcriptRegistry.getParsed(rec.transcriptSessionId);
+    if (!parsed || parsed.events.length === 0) continue;
+    const sig = transcriptSig(parsed.events);
     if (!shouldLabel(s.id, sig, now)) continue;
-    await labelSession(context, (meta) => sessionManager.setAiMeta(s.id, meta));
+    await labelSession(
+      renderClaudeContext(parsed.events, parsed.firstPrompt),
+      (meta) => sessionManager.setAiMeta(s.id, meta),
+    );
   }
 
   // 2) Every live (<30min) external session — the same set the sidebar shows,

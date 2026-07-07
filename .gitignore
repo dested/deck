@@ -8,3 +8,6 @@ deck.config.json
 # Deck standalone app-window browser profile
 .deck-app-profile/
 .idea
+
+# Windows shortcuts (contain absolute machine paths)
+*.lnk

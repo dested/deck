@@ -7,8 +7,9 @@
 Last updated: M0–M6 complete + verified (2026-07-04); **V2 M7–M17 built**
 (2026-07-05, typecheck + prod build green, live UI unverified — see V2 section).
 **V3 M18–M20 built** (2026-07-05, no spec — built direct; see V3 section).
-**Task board rewritten to M17v2** (2026-07-06, personal kanban — see its section;
-2026-07-07: card images + rich ProjectPicker + fuller capture composer).
+**Task board rewritten to v3 "Focus Stack"** (2026-07-07: kanban columns
+replaced by NOW-hero/on-deck/grouped-pile stack + triage mode + edit side-panel
++ Life bucket + rail Focus block — see its section).
 **Bulletproofed** (2026-07-06): crash guard + supervisor auto-restart + durable
 scrollback/state — see the Bulletproofing section.
 **Expanded mission-control sidebar** (2026-07-07): two-mode rail + per-agent
@@ -18,6 +19,8 @@ section.
 **Transcript feed → CC terminal look** (2026-07-07): the read-only agent feed
 now renders like Claude Code's own terminal (monospace, `●` bullets, `⎿` result
 branches) — see its section.
+**Public-release prep** (2026-07-07): real README + LICENSE + mocked
+screenshots + PII scrub — see its section.
 
 **V2 feature spec: `SPEC2.md`** (2026-07-05) — M7–M17: **all built** (typecheck
 + prod web build green; live UI not yet exercised). See the V2 section below.
@@ -55,10 +58,12 @@ open-tab-only, revised 2026-07-07) labels **every live session the sidebar
 shows**: owned live sessions + **all `externalSessions()` (<30min)** — no longer
 gated on a subscribed feed, so a card never sits on its raw `proj cc·1a2b`
 default while active. Kept cheap by: haiku (`tabTitle` feature, budget bumped
-0.5→$1.0/day), a change-gate (transcript sig / ring-tail sha1), a **per-session
-60s cooldown** (`shouldLabel`, so a busy session isn't re-billed every tick),
-and a lean context (last 12 events ≤200 chars each, anchored with `goal:` =
-`firstPrompt`). `Session.aiMeta`. Client title precedence via `lib/sessions.ts
+0.5→$1.0/day), a change-gate (transcript sig), a **per-session 60s cooldown**
+(`shouldLabel`, so a busy session isn't re-billed every tick), and a lean
+context (last 12 events ≤200 chars each, anchored with `goal:` = `firstPrompt`).
+**Shell terminals are one-and-done** — labelled ONCE from their pty tail
+(`terminalDone` set, marked only on a real label), then never re-run (a
+terminal's purpose doesn't drift). `Session.aiMeta`. Client title precedence via `lib/sessions.ts
 displayTitle()` (user rename > aiMeta.title > default name matching
 `/ (sh|cc)·[0-9a-f]{4}$/`). Budget trip is graceful — card keeps its last title.
 
@@ -126,8 +131,7 @@ palette entries. New small primitives: `components/ui/Switch.tsx`,
 **V2 gotchas:** (1) server needs restart for new state shape; (2) CLI AI prompt
 via stdin (not argv); (3) FTS sentinels are PUA U+E000/E001 — keep server+client
 in sync; (4) `liveMeta`/`reviews` await `aiComplete` sequentially (per-feature
-in-flight guard drops concurrent calls); (5) stray `server/src/_verify.tmp.ts`
-is a leftover Library-feature harness (not mine; harmless, typechecks).
+in-flight guard drops concurrent calls).
 
 ---
 
@@ -347,18 +351,73 @@ identical (verified in-browser, split view).
   rebuild (`bun run build` + bounce) — the standalone `deck.cmd` app serves the
   old bundle on 12345 until then.
 
-## Task board v2 — personal ADHD-first kanban (2026-07-06)
+## Public-release prep (2026-07-07)
 
-Full rewrite of M17. The board is now a **pure personal kanban**: it can NEVER
-start a session/agent (autopilot + startTask + session linkage deleted), has
-**no due dates anywhere**, and is built for dump-first capture. Needs a server
-restart (state migration) — old cards are migrated in `state.ts migrateTask`
-(backlog→inbox, queued→next, linked→now; sessionId/recipeId/startedAt dropped).
+Getting the repo HN-ready (public at github.com/dested/deck):
 
-- **Columns** (`TaskStatus`): `inbox` (zero-friction brain dump) / `next`
-  (short curated list) / `now` (THE one thing — soft limit: >1 card turns the
-  header amber with a "one thing at a time" nag, never blocks) / `done` (wins;
-  cards fade at 7d client-side, auto-pruned at 30d lazily in `listTasks`).
+- **README.md** rewritten from the one-line stub: pitch, feature tour with
+  screenshots, install/config/FAQ. **LICENSE** added (MIT, © "dested" — handle,
+  not real name). Screenshots live in `docs/screenshots/*.png` and are **mocked**
+  (HTML mockups styled from `theme/tokens.css`, rendered via headless Edge —
+  fake project names like aurora-web/ledger-api/meshkit; sources were scratch
+  files, not in the repo). To redo them: rebuild similar HTML + `msedge
+  --headless=new --screenshot --force-device-scale-factor=2`.
+- **PII scrub of the working tree**: `C:\Users\<user>` + real project names
+  genericized in SPEC.md/SPEC2.md/cliffnotes/locator.ts/shared/identity.ts/
+  audit-smoke.ts; `Deck.lnk`, `deck.cmd - Shortcut.lnk`, `.idea/.gitignore`
+  untracked (`*.lnk` now gitignored); leftover `server/src/_verify.tmp.ts`
+  deleted. NOTE: **git history still contains the old strings + the real-name
+  author identity** — squash/rewrite before flipping public.
+- **Config default root changed**: `config.root` default is now `~/code` (was
+  hardcoded `G:\code`). This machine keeps `G:\code` via the local (gitignored)
+  `deck.config.json`, which now sets `root` explicitly — don't delete that key.
+
+## Task board v3 — the Focus Stack (2026-07-07; replaced the v2 kanban VIEW)
+
+The kanban **columns are gone** (24 cards crammed one narrow scroll while three
+empty columns burned the ultrawide). Same data model + endpoints as v2 — no
+state migration; server restart only for the Life-bucket guard below. The
+board is still pure-personal: it can NEVER start a session/agent, no due dates.
+
+- **Layout** (`views/BoardView.tsx` rewritten again): one centered vertical
+  stack (max-w 900) — sticky composer → **NOW** hero (big accent card,
+  Done / "Later→" buttons; empty state offers `★ Start: <first on-deck>`) →
+  **ON DECK** (`next`, compact one-line rows) → **THE PILE** (`inbox`,
+  grouped by project: header = avatar+name+count, collapse persisted in
+  `uiStore.taskGroupsCollapsed`, biggest group first / Unassigned last;
+  **drop a row on a group header = assign that project**) → **WINS** (`done`,
+  top 5 + expand, Clear). Rows: hover actions (queue / ★ now / ✓ done) +
+  move/delete context menu; **click any task = edit side-panel**. Section
+  bodies are drop targets (move-to-status append); rows insert-before.
+- **Edit side-panel** `components/board/TaskPanel.tsx` — right slide-over
+  (absolute in BoardView, 420px), driven by `uiStore.taskPanelId` (transient):
+  status segmented, title/project/notes, image grid + paste/drop, prompt
+  draft/copy/edit, delete. **Auto-opens after quick-capture Enter but focus
+  stays in the composer** (each add swaps the panel; dumping never breaks).
+- **Triage mode** `components/board/TriageMode.tsx` — "⚡ Triage N" on the pile
+  header: full-view overlay dealing ONE inbox card at a time (oldest first,
+  queue frozen at mount), keys 1=Now 2=Next 3=Keep 4=Trash, Esc exits,
+  progress bar, win screen. The ADHD answer to "24 things, can't decide".
+- **Life bucket**: `LIFE_PROJECT_ID = "__life__"` (const in `shared`) — a
+  sentinel `TaskCard.projectId` for non-code tasks. First-class in
+  `ProjectPicker` (Heart-avatar row above "No project"), its own pile group;
+  `generateTaskPrompt` rejects it with a friendly error. NOT a real project.
+- **Shared client task logic** `web/src/lib/tasks.ts`: `focusBuckets`,
+  optimistic `moveTask`/`moveToStatus`, Life helpers — used by board, panel,
+  triage, and the rail Focus block.
+- **Tasks in mission control**: Rail gained a **Tasks NavRow up top** (next to
+  Mission Control; ★ badge when a Now exists; the footer Kanban icon was
+  removed) and, expanded mode only, `components/rail/FocusStrip.tsx` — ambient
+  Focus block under the nav (NOW row + 3 on-deck + "N in pile"); clicking a
+  task opens the board **with that card's panel open**. `ExpandedProjects`
+  footer now shows the project's **NOW task title** (★ + truncated) + a
+  queued-count chip instead of the old `1★ 2⋯` counts.
+
+Retained v2 mechanics (unchanged):
+
+- **Statuses** (`TaskStatus`): `inbox` / `next` / `now` (soft >1 nag, never
+  blocks) / `done` (fades at 7d client-side, auto-pruned at 30d in
+  `listTasks`).
 - **Card** (`TaskCard`): title, body (notes), `projectId: string|null`
   (capture first, assign later), `prompt: string|null` (see below),
   `images: TaskImage[]` (see below), order (fractional — card-level drop
@@ -384,29 +443,26 @@ restart (state migration) — old cards are migrated in `state.ts migrateTask`
 - **ProjectPicker** (`components/board/ProjectPicker.tsx`): Radix Popover
   replacing the old `<select>` — search + arrow-key nav, rows are the Rail
   "Open projects" look (gradient avatar + initials + status dot, name,
-  branch/dirty/agents meta), sections: No project → Open projects
+  branch/dirty/agents meta), sections: Life → No project → Open projects
   (uiStore.openProjects) → All projects (activity-sorted). Used in the
-  composer (compact chip) and card editor (`block`).
-- **AI prompt drafting** (the ONLY automation): ✨ on the expanded card →
+  composer (compact chip) and the task panel (`block`).
+- **AI prompt drafting** (the ONLY automation): ✨ in the task panel →
   `POST /tasks/:id/generate-prompt` → `tasks/service.generateTaskPrompt` reads
   the project's `cliffnotes.md` (14KB cap) + title/body → `aiComplete` feature
   `taskPrompt` (sonnet) → saved on the card; UI shows copy-to-clipboard +
-  editable prompt textarea. Requires an assigned project (400 otherwise);
-  503 = AI off/over budget.
+  editable prompt textarea. Requires an assigned real project (400 otherwise,
+  incl. `__life__`); 503 = AI off/over budget.
 - **Server**: `tasks/service.ts` (list/create/update/delete/clearDone/
   generateTaskPrompt + addTaskImage/removeTaskImage/getTaskImage; delete +
   prune broadcast **`tasks.removed`**), `routes/tasks.ts` (`/tasks/clear-done`
   registered before `/tasks/:id`). `tasks/autopilot.ts` DELETED;
   `state.autopilot` removed from DeckState. `state.ts migrateTask` backfills
   `images: []` on old cards.
-- **Client**: `views/BoardView.tsx` rewritten — takes an optional `projectId`
-  prop: without it it's the top-level board (Rail footer "Tasks" / palette),
-  with it it's the **per-project "Tasks" view tab** (`ProjectViewKind +=
-  "tasks"`, second tab after Agents; `ensureProjectViews` auto-adds it to old
-  projects; root stays agents-only). Scoped board filters to that project,
-  quick-capture auto-assigns it, project chips/select hidden. Capture bar =
-  one input, Enter → Inbox. Cards expand inline to edit (fields save on blur).
-  Native DnD everywhere incl. insert-before-card reordering.
+- **Scoping**: `BoardView` takes an optional `projectId` prop — without it
+  it's the top-level board (Rail Tasks NavRow / palette), with it it's the
+  **per-project "Tasks" view tab** (`ProjectViewKind += "tasks"`; root stays
+  agents-only). Scoped stack filters to that project, quick-capture
+  auto-assigns it, pile is flat (no groups), pickers hidden.
 
 ## Library category bands (2026-07-06)
 
@@ -436,8 +492,66 @@ roots; **extra-root project ids are `encodePath(fullPath)`** (stable, collision
 -free across roots; `name` stays the folder basename). Root chokidar tier
 watches every root; `locator.isRootDirName` matches any root (unclaimed
 non-git-subdir transcripts from any root land in `__root__`). `/api/config` +
-`DeckClientConfig` expose `roots`; Settings shows the list. Needs server
-restart after editing deck.config.json (config is read once at boot).
+`DeckClientConfig` expose `roots`; Settings shows the list. Editing
+deck.config.json still needs a restart, but roots can also be added/removed from
+the UI with **no restart** — see the next section.
+
+## UI-managed project roots — no restart (2026-07-07)
+
+Extra scan roots are now add/removable from **Settings → Root directories**
+instead of hand-editing deck.config.json + bouncing the server. `config.roots`
+became a **getter** (`config.ts resolveRoots()` = `[root, ...fileRoots,
+...runtimeExtraRoots]`, deduped case-insensitively) so the scanner + locator —
+which read `config.roots` fresh every pass — pick up changes instantly. Three
+tiers of root:
+- `config.root` — primary (`deck.config.json.root`, default `~/code`), backs
+  `__root__`, locked in the UI.
+- `fileRoots` — `deck.config.json.roots` (exported from config.ts), locked in
+  the UI (shown with a 🔒 "config" tag).
+- runtime `extraRoots` — the UI-editable ones, persisted in **`state.json`
+  `extraRoots`** (new `DeckState` field, default `[]`). `loadState()` seeds them
+  into config via `setRuntimeExtraRoots()` on boot.
+
+**Routes** (`routes/projects.ts`): `POST /roots {path}` (folder must exist → 400;
+locked/dup → 400/409), `DELETE /roots {path}` (refuses locked roots → 400). Both
+mutate `state.extraRoots` then `reloadRoots()` = `setRuntimeExtraRoots` +
+**`resyncRootWatcher()`** (watcher.ts re-points the chokidar root tier at the new
+`config.roots` via an add/unwatch diff — the root tier now starts EMPTY and is
+driven entirely by this) + `rescan()` + `syncGitHeartbeat()` + `refreshTopGit(30)`.
+Returns `{roots, extraRoots}`. **Client**: `api.addRoot/removeRoot`;
+`DeckClientConfig` gains `fileRoots`/`extraRoots`; `SettingsDialog.tsx`
+`RootsEditor` (add input + per-row X; invalidates `["config"]`/`["projects"]`;
+the rescan's `projects.updated` WS push updates the live project store on every
+client). Smoke test `server/scripts/roots-smoke.ts` (temp fake-git project →
+setRuntimeExtraRoots → scanProjects round-trip, 7/7; never touches state.json).
+Needs ONE server restart to activate the new server code the first time.
+
+## In-app Reload UI + Restart server — window never closes (2026-07-07)
+
+Two controls so the standalone `deck.cmd` window never has to be closed to pick
+up changes: **Settings → App** (and command palette "Reload UI" / "Restart
+server"). `web/src/lib/serverControl.ts`:
+- **Reload UI** = `location.reload()` — picks up a fresh `web/dist` build +
+  re-bootstraps every store. Zero backend disruption.
+- **Restart server** = `POST /api/system/restart` → then polls `/api/health`
+  (800ms initial gap, 500ms interval, 30s cap) → `location.reload()` when the
+  fresh process answers. Toast throughout; the WS client already auto-reconnects
+  (`ws.ts`, 500ms→8s backoff) so nothing hangs.
+
+Server: `routes/system.ts POST /system/restart` → `lib/lifecycle.ts
+restartServer()` = flush scrollback + state, stopServices, disposeAll ptys, then
+**`process.exit(1)`** — the SAME mechanism a crash-guard restart uses, so the
+supervisor (`supervise.mjs`) respawns it (non-zero exit → restart; exit 0 =
+intentional stop, no restart). Guarded by **`isSupervised()`** (`process.env.
+DECK_SUPERVISED === "1"`, now set by `supervise.mjs` in the child env): a bare
+`tsx`/dev run returns 409 and the button is disabled (config gains `supervised`).
+
+**Bootstrap gotcha:** activating this the first time needs a FULL relaunch of
+`deck.cmd` (stop the supervisor + restart), not just killing the child —
+`DECK_SUPERVISED` is injected when the supervisor spawns the child, so the
+already-running old supervisor won't set it. After one full relaunch, every
+later "Restart server" click works (the supervisor's env persists across
+respawns). Same restart also activates the UI-managed-roots server code above.
 
 ## Expanded mission-control sidebar (2026-07-07)
 
@@ -775,7 +889,7 @@ agentcommunity/
 
 ## Encoded transcript paths (§4.2)
 `encodePath` = replace every non-`[A-Za-z0-9-]` char with `-`. Verified:
-`G:\code\scenebeans2`→`G--code-scenebeans2`, `G:\code\shitpost.gg`→`G--code-shitpost-gg`.
+`G:\code\my-app`→`G--code-my-app`, `G:\code\my-site.gg`→`G--code-my-site-gg`.
 A dir maps to a project by longest-prefix (`==` or `<enc>-…`).
 
 ## Transcript JSONL ground truth (verified on this machine, for M3)
@@ -953,7 +1067,7 @@ and destructure (`const { Terminal } = HeadlessPkg`); named ESM import fails.
 ## Gotchas
 - Bin resolution: vite/tsx live in workspace `.bin`; root scripts delegate via
   `bun run --filter @deck/<pkg> <script>`. Don't call `vite`/`tsc` from repo root.
-- `claude` binary on this machine: `C:\nvm4w\nodejs\claude.cmd` (via `where claude`).
+- `claude` binary resolution: `where claude` → typically an npm/nvm `claude.cmd` shim; overridable via `deck.config.json` `claudeBin`.
 - node-pty@1.1.0 ships win32-x64 prebuilds (`prebuilds/win32-x64/{pty,conpty}.node`) — no native build.
 - Windows `fs.watch` fires on content writes, not mtime-only touches (see deviation #1).
 - Virtualized feed MUST set `scrollbar-gutter: stable` on the scroll container.

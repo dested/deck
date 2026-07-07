@@ -14,6 +14,8 @@ import {
   BookMarked,
   Activity,
   Radar,
+  RefreshCw,
+  RotateCw,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUIStore } from "../stores/uiStore";
@@ -21,6 +23,7 @@ import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore"
 import { useSessionsStore, selectSessions, isLive } from "../stores/sessionsStore";
 import { spawnSession, closeSession } from "../lib/sessions";
 import { useRecipes } from "../lib/useRecipes";
+import { reloadUI, restartServer } from "../lib/serverControl";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
 
@@ -99,6 +102,20 @@ export function CommandPalette() {
       label: "Open settings",
       icon: <Settings size={15} />,
       run: () => ui.setSettingsOpen(true),
+    });
+    cmds.push({
+      id: "reload-ui",
+      label: "Reload UI",
+      hint: "new frontend build",
+      icon: <RefreshCw size={15} />,
+      run: () => reloadUI(),
+    });
+    cmds.push({
+      id: "restart-server",
+      label: "Restart server",
+      hint: "bounce backend, window stays open",
+      icon: <RotateCw size={15} />,
+      run: () => void restartServer(),
     });
     for (const s of selectSessions(sessions).filter(isLive)) {
       cmds.push({

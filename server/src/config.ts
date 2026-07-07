@@ -36,15 +36,44 @@ function loadRaw(): RawConfig {
 const raw = loadRaw();
 const home = os.homedir();
 
-const primaryRoot = raw.root ?? "G:\\code";
+// Default projects root: ~/code. Point Deck at your actual code folder via
+// deck.config.json { "root": "D:\\wherever" }.
+const primaryRoot = raw.root ?? path.join(home, "code");
 
-// [primary, ...extras] — normalized, deduped case-insensitively (Windows).
+function normRoot(r: string): string {
+  return path.win32.resolve(r.trim());
+}
+
+// Extra roots configured at runtime from the UI (persisted in ~/.deck/state.json
+// `extraRoots`, seeded on boot by loadState). Kept separate from deck.config.json
+// `roots` so the UI can show which entries are file-locked vs removable.
+let runtimeExtraRoots: string[] = [];
+
+// Roots declared in deck.config.json (read-only in the UI).
+export const fileRoots: string[] = (raw.roots ?? [])
+  .filter((r): r is string => typeof r === "string" && r.trim() !== "")
+  .map(normRoot);
+
+/** Replace the runtime extra-root list (from state.json / the UI). */
+export function setRuntimeExtraRoots(list: string[]): void {
+  runtimeExtraRoots = (list ?? [])
+    .filter((r): r is string => typeof r === "string" && r.trim() !== "")
+    .map(normRoot);
+}
+
+/** The runtime extra-root list (the UI-editable ones), normalized. */
+export function getRuntimeExtraRoots(): string[] {
+  return runtimeExtraRoots;
+}
+
+// [primary, ...deck.config.json roots, ...runtime UI roots] — normalized,
+// deduped case-insensitively (Windows).
 function resolveRoots(): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const r of [primaryRoot, ...(raw.roots ?? [])]) {
+  for (const r of [primaryRoot, ...fileRoots, ...runtimeExtraRoots]) {
     if (typeof r !== "string" || r.trim() === "") continue;
-    const norm = path.win32.resolve(r.trim());
+    const norm = normRoot(r);
     const key = norm.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -56,7 +85,11 @@ function resolveRoots(): string[] {
 export const config = {
   repoRoot,
   root: primaryRoot,
-  roots: resolveRoots(),
+  // Dynamic: recomputed each read so runtime UI root changes take effect without
+  // a restart (scanner + locator both read config.roots fresh on every pass).
+  get roots(): string[] {
+    return resolveRoots();
+  },
   port: raw.port ?? 12345,
   devPort: 12346,
   claudeDir: raw.claudeDir ?? path.join(home, ".claude"),

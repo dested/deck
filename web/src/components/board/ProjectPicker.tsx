@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { ChevronDown, GitBranch, CircleSlash, Check } from "lucide-react";
+import { ChevronDown, GitBranch, CircleSlash, Check, Heart } from "lucide-react";
 import type { ProjectSummary } from "@deck/shared";
+import { LIFE_PROJECT_ID, LIFE_NAME, isLife } from "../../lib/tasks";
 import { useProjectsStore, selectSortedProjects } from "../../stores/projectsStore";
 import {
   useSessionsStore,
@@ -19,6 +20,7 @@ import { cn } from "../../lib/cn";
 
 type Entry =
   | { kind: "none" }
+  | { kind: "life" }
   | { kind: "project"; project: ProjectSummary; open: boolean };
 
 export function ProjectPicker({
@@ -32,7 +34,8 @@ export function ProjectPicker({
 }) {
   const [open, setOpen] = useState(false);
   const byId = useProjectsStore((s) => s.byId);
-  const selected = value ? byId[value] : null;
+  const lifeSelected = isLife(value);
+  const selected = value && !lifeSelected ? byId[value] : null;
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -42,13 +45,28 @@ export function ProjectPicker({
           className={cn(
             "flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] border px-1.5 text-[11.5px] transition-colors",
             block && "h-8 w-full px-2 text-[12px]",
-            selected
+            selected || lifeSelected
               ? "border-hair bg-panel text-t2 hover:border-hairfocus hover:text-t1"
               : "border-dashed border-hair text-t3 hover:border-hairfocus hover:text-t2",
             "data-[state=open]:border-hairfocus data-[state=open]:text-t1",
           )}
         >
-          {selected ? (
+          {lifeSelected ? (
+            <>
+              <span
+                className={cn(
+                  "flex shrink-0 items-center justify-center rounded-[4px] text-white/85",
+                  block ? "h-5 w-5 rounded-[5px]" : "h-4 w-4",
+                )}
+                style={{ background: projectGradient(LIFE_NAME) }}
+              >
+                <Heart size={block ? 10 : 8} fill="currentColor" />
+              </span>
+              <span className={cn("truncate font-medium", block && "min-w-0 flex-1 text-left")}>
+                {LIFE_NAME}
+              </span>
+            </>
+          ) : selected ? (
             <>
               <span
                 className={cn(
@@ -119,6 +137,7 @@ function PickerList({
       (p) => p.kind !== "root" && !openSet.has(p.id) && match(p),
     );
     const out: Entry[] = [];
+    if (!q || LIFE_NAME.toLowerCase().includes(q)) out.push({ kind: "life" });
     if (!q) out.push({ kind: "none" });
     const firstOpen = open.length ? out.length : -1;
     for (const p of open) out.push({ kind: "project", project: p, open: true });
@@ -138,7 +157,8 @@ function PickerList({
       ?.scrollIntoView({ block: "nearest" });
   };
 
-  const pick = (e: Entry) => onPick(e.kind === "none" ? null : e.project.id);
+  const pick = (e: Entry) =>
+    onPick(e.kind === "none" ? null : e.kind === "life" ? LIFE_PROJECT_ID : e.project.id);
 
   return (
     <div>
@@ -173,10 +193,22 @@ function PickerList({
         )}
         {entries.map((e, i) => {
           return (
-            <div key={e.kind === "none" ? "__none__" : e.project.id}>
+            <div
+              key={
+                e.kind === "none" ? "__none__" : e.kind === "life" ? LIFE_PROJECT_ID : e.project.id
+              }
+            >
               {i === firstOpenIdx && <SectionLabel>Open projects</SectionLabel>}
               {i === firstRestIdx && <SectionLabel>All projects</SectionLabel>}
-              {e.kind === "none" ? (
+              {e.kind === "life" ? (
+                <LifeRow
+                  active={clampedActive === i}
+                  selected={isLife(value)}
+                  idx={i}
+                  onHover={() => setActive(i)}
+                  onPick={() => pick(e)}
+                />
+              ) : e.kind === "none" ? (
                 <NoProjectRow
                   active={clampedActive === i}
                   selected={value === null}
@@ -208,6 +240,50 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-t3">
       {children}
     </div>
+  );
+}
+
+// The non-code bucket: bills, errands, everything that isn't a repo.
+function LifeRow({
+  active,
+  selected,
+  idx,
+  onHover,
+  onPick,
+}: {
+  active: boolean;
+  selected: boolean;
+  idx: number;
+  onHover: () => void;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-pp-idx={idx}
+      onMouseEnter={onHover}
+      onClick={onPick}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-[7px] px-2 py-1.5 text-left",
+        active && "bg-raised",
+      )}
+    >
+      <span
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-white/85"
+        style={{ background: projectGradient(LIFE_NAME) }}
+      >
+        <Heart size={13} fill="currentColor" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium leading-5 text-t1">
+          {LIFE_NAME}
+        </span>
+        <span className="block truncate text-[11px] leading-4 text-t3">
+          not code — bills, errands, everything else
+        </span>
+      </span>
+      {selected && <Check size={13} className="shrink-0 text-accenttext" />}
+    </button>
   );
 }
 

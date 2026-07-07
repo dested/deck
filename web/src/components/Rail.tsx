@@ -9,7 +9,7 @@ import {
   Code2,
   Sparkles,
   Newspaper,
-  Kanban,
+  ListTodo,
   Radar,
   SquareTerminal,
   Activity,
@@ -30,6 +30,8 @@ import { cn } from "../lib/cn";
 import { projectGradient, projectInitials } from "../lib/identity";
 import { Tooltip } from "./ui/Tooltip";
 import { ExpandedProjects } from "./rail/ExpandedProjects";
+import { FocusStrip } from "./rail/FocusStrip";
+import { useTasksStore } from "../stores/tasksStore";
 import {
   menuContent,
   menuContentStyle,
@@ -58,6 +60,10 @@ export function Rail() {
   const setTopView = useUIStore((s) => s.setTopView);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const inboxCount = useInboxCount();
+  // The "now" star on the Tasks row: your one thing, visible from anywhere.
+  const nowCount = useTasksStore(
+    (s) => Object.values(s.byId).filter((t) => t.status === "now").length,
+  );
 
   const stats = useMemo(() => selectProjectStats(sessions), [sessions]);
 
@@ -106,6 +112,19 @@ export function Rail() {
             ) : null
           }
         />
+        <NavRow
+          icon={<ListTodo size={16} />}
+          label="Tasks"
+          active={topView === "board"}
+          onClick={() => setTopView(topView === "board" ? null : "board")}
+          trailing={
+            nowCount > 0 ? (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[color:var(--accent)]/20 px-1 text-[9px] font-bold text-accenttext">
+                ★
+              </span>
+            ) : null
+          }
+        />
         {byId["__root__"] && (
           <NavRow
             icon={<SquareTerminal size={16} />}
@@ -115,6 +134,9 @@ export function Rail() {
           />
         )}
       </div>
+
+      {/* Ambient focus: the NOW task + on-deck, always in view (expanded mode). */}
+      {expanded && <FocusStrip />}
 
       <div className="mt-2 flex items-center px-4 pb-1 pt-2">
         <span className="section-label flex-1">Open projects</span>
@@ -168,7 +190,6 @@ export function Rail() {
         )}
       >
         <FooterView view="system" label="System (ports + processes)" icon={<Activity size={16} />} topView={topView} onClick={setTopView} />
-        <FooterView view="board" label="Tasks" icon={<Kanban size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="digest" label="Daily digest" icon={<Newspaper size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="ai" label="AI Admin" icon={<Sparkles size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="costs" label="Costs" icon={<DollarSign size={16} />} topView={topView} onClick={setTopView} />

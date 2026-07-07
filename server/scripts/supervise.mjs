@@ -45,7 +45,9 @@ function start() {
   child = spawn(process.execPath, [tsxCli, "src/index.ts"], {
     cwd: serverDir,
     stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production" },
+    // DECK_SUPERVISED lets the server know a non-zero exit will be respawned,
+    // so the UI "restart backend" button is safe to offer (see lib/lifecycle.ts).
+    env: { ...process.env, NODE_ENV: "production", DECK_SUPERVISED: "1" },
   });
 
   child.on("exit", (code, signal) => {

@@ -4,7 +4,8 @@ import fastifyWebsocket from "@fastify/websocket";
 import fs from "node:fs";
 import path from "node:path";
 import type { WebSocket } from "ws";
-import { config } from "./config.js";
+import { config, fileRoots, getRuntimeExtraRoots } from "./config.js";
+import { isSupervised } from "./lib/lifecycle.js";
 import { loadState, flushState } from "./state.js";
 import { eventHub } from "./ws/events.js";
 import type { WsServerMsg } from "@deck/shared";
@@ -88,9 +89,13 @@ async function main() {
       api.get("/config", async () => ({
         root: config.root,
         roots: config.roots,
+        fileRoots,
+        extraRoots: getRuntimeExtraRoots(),
         port: config.port,
         claudeBin: ptyManager.getClaudeBin(),
         defaultShell: config.defaultShell,
+        // Whether "restart backend" is available (running under the supervisor).
+        supervised: isSupervised(),
       }));
       api.get("/health", async () => ({ ok: true, time: Date.now() }));
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { TaskCard, TaskImage, TaskStatus } from "@deck/shared";
+import { LIFE_PROJECT_ID, type TaskCard, type TaskImage, type TaskStatus } from "@deck/shared";
 import { config } from "../config.js";
 import { getState, updateState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
@@ -279,6 +279,8 @@ export async function generateTaskPrompt(id: string): Promise<TaskCard | null> {
   const task = getState().tasks.find((t) => t.id === id);
   if (!task) throw new Error("task not found");
   if (!task.projectId) throw new Error("assign a project first");
+  if (task.projectId === LIFE_PROJECT_ID)
+    throw new Error("Life tasks don't get code prompts — assign a code project");
   const projectPath = projectRegistry.getPath(task.projectId);
   if (!projectPath) throw new Error("project not found");
 

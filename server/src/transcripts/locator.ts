@@ -4,14 +4,14 @@ import { config } from "../config.js";
 
 // §4.2 Encoding: take the full absolute cwd and replace every character that is
 // not [A-Za-z0-9-] with '-'. Verified against real dirs:
-//   G:\code\scenebeans2    -> G--code-scenebeans2
-//   G:\code\shitpost.gg    -> G--code-shitpost-gg
+//   G:\code\my-app         -> G--code-my-app
+//   G:\code\my-site.gg     -> G--code-my-site-gg
 export function encodePath(absPath: string): string {
   return absPath.replace(/[^A-Za-z0-9-]/g, "-");
 }
 
 // A transcript dir name may correspond to a project cwd OR a subdirectory of it
-// (e.g. "G--code-scenebeans2-sub" belongs to project scenebeans2). We resolve a
+// (e.g. "G--code-my-app-sub" belongs to project my-app). We resolve a
 // transcript dir to a project by longest-prefix match against the encoded forms
 // of known project paths.
 export interface TranscriptDirInfo {
@@ -91,7 +91,7 @@ export function transcriptDirsForProject(projectPath: string): string[] {
   for (const info of listTranscriptDirs()) {
     if (info.name === encoded || info.name.startsWith(encoded + "-")) {
       // guard: startsWith could over-match a sibling project whose encoded name
-      // extends this one (e.g. scenebeans2 vs scenebeans2b). The '-' separator
+      // extends this one (e.g. my-app2 vs my-app2b). The '-' separator
       // requirement above prevents the "2b" case; exact + '-' boundary is safe.
       result.push(info.dir);
     }

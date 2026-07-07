@@ -4,13 +4,13 @@ Two prompts. Run **Prompt 1 with Opus 4.8** to build the whole app. Run **Prompt
 
 ---
 
-## Prompt 1 — the build (run with Opus 4.8, fresh session in `G:\code\agentcommunity`)
+## Prompt 1 — the build (run with Opus 4.8, fresh session at the repo root)
 
 Read SPEC.md in this repo top to bottom before writing any code — it is the complete, locked specification for Deck, a localhost mission-control app for my projects and Claude Code agents. Follow it to the letter: the stack, the protocol, the design tokens, the screens, and especially the milestone order in §13 are all locked decisions. Do not substitute libraries, do not redesign the UI, do not skip the per-milestone verification steps.
 
 Ground rules:
 
-1. Build milestone by milestone (M0 → M6). At the end of each milestone: run `tsc --noEmit` in both packages until clean, then actually perform that milestone's ✅ verify steps against reality — real repos in G:\code, real transcripts in ~/.claude/projects, a real `claude` process. Do not mark a milestone done on the strength of "it compiles."
+1. Build milestone by milestone (M0 → M6). At the end of each milestone: run `tsc --noEmit` in both packages until clean, then actually perform that milestone's ✅ verify steps against reality — real repos in the code root, real transcripts in ~/.claude/projects, a real `claude` process. Do not mark a milestone done on the strength of "it compiles."
 2. Where SPEC.md says "verify against reality" (transcript JSONL schema §7.1, the claude spawn method §5.1, the encoded-path mapping §4.2), inspect the real files/behavior on this machine first and build against what you find. The parser must never crash on an unknown line or block type.
 3. The embedded terminal (§5.4) is the make-or-break feature. Implement every item on its checklist and run its acceptance test for real. If after two genuine debugging attempts the terminal still fails the bar (laggy typing, resize garbling ConPTY output, broken reattach after refresh), STOP at M2: write what you tried and what's still broken into cliffnotes.md under "## Handoff: terminal issues", then end your final message with exactly this line so I know what to do: **"M2 needs the Fable pass — run Prompt 2 from KICKOFF.md with the Fable model before continuing."** Do not continue to M3 with a subpar terminal.
 4. The visual bar is §8 "calm precision" — Linear-esque, dark, quiet, exact. Before finishing, screenshot every screen and fix anything that drifts from the tokens and feel rules. No generic-AI-slop styling, no stock component-library look.
@@ -21,7 +21,7 @@ When all milestones are done: give me the commands to run it (`bun run dev` for 
 
 ---
 
-## Prompt 2 — the polish pass (run with Fable, fresh session in `G:\code\agentcommunity`)
+## Prompt 2 — the polish pass (run with Fable, fresh session at the repo root)
 
 Run this AFTER Opus finishes the build (it will tell you), OR earlier if Opus stopped at M2 and asked for it.
 

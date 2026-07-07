@@ -78,7 +78,7 @@ require them.
    export it from one shared place (`server/src/lib/cleanEnv.ts`) instead of
    duplicating.
 5. **`claude` binary resolution**: always via `ptyManager.getClaudeBin()`
-   (handles the `C:\nvm4w\nodejs\claude.cmd` shim); invoke through
+   (handles npm/nvm `claude.cmd` shims); invoke through
    `cmd /c <bin> ...` on win32 like the blurb route does.
 6. **Parse CLI JSON loosely.** `claude -p ... --output-format json` emits a
    JSON object with (verify once on this machine before relying on names —

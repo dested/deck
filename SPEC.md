@@ -9,7 +9,7 @@ This document is the complete build specification. It is written to be followed 
 ## 0. Context you must internalize first
 
 - The user is a fast-moving solo developer on **Windows 11**. All projects live in `G:\code\<folder>`. A folder containing `.git` is a project (~160 of ~185 folders qualify).
-- The user runs **multiple Claude Code CLI sessions simultaneously** in PowerShell tabs. Claude Code writes live transcripts to `C:\Users\dested\.claude\projects\<encoded-path>\<session-uuid>.jsonl` where the encoded path is the project cwd with `:` and `\` replaced by `-` (e.g. `G:\code\scenebeans2` → `G--code-scenebeans2`).
+- The user runs **multiple Claude Code CLI sessions simultaneously** in PowerShell tabs. Claude Code writes live transcripts to `C:\Users\<user>\.claude\projects\<encoded-path>\<session-uuid>.jsonl` where the encoded path is the project cwd with `:` and `\` replaced by `-` (e.g. `G:\code\my-app` → `G--code-my-app`).
 - The user manages git *through* Claude mostly, but wants first-class git UI for reviewing/staging/committing directly.
 - This repo (`G:\code\agentcommunity`) is where the app lives. The product name is **Deck**. The app binds to **127.0.0.1:12345** only.
 - The user's quality bar: "world class." Specifically the embedded terminal "has to look right and good — if it sucks I'm not gonna use it." Treat terminal quality as a P0 feature, not a widget.
@@ -104,7 +104,7 @@ The left sidebar lists **Sessions** (grouped into user-named groups, with live s
 
 ```
 GET  /api/projects                          → ProjectSummary[] (sorted by activity desc)
-GET  /api/projects/:id                      → ProjectDetail (id = folder name, e.g. "scenebeans2")
+GET  /api/projects/:id                      → ProjectDetail (id = folder name, e.g. "my-app")
 GET  /api/projects/:id/tree?path=rel/sub    → TreeNode[] (one level, lazy)
 GET  /api/projects/:id/file?path=...        → { content, language, size, truncated }  (refuse >2MB with truncated:true metadata; binary → { binary:true })
 PUT  /api/projects/:id/file?path=...        → save (Monaco edits)
@@ -134,7 +134,7 @@ POST /api/groups/:id/assign                 { sessionId }   (a session belongs t
 
 ### 3.2 WebSockets
 
-- **`/ws/events`** — JSON. Client subscribes: `{ op:"sub", topics:["projects","sessions","git:scenebeans2","transcript:<sessionId>"] }`. Server pushes:
+- **`/ws/events`** — JSON. Client subscribes: `{ op:"sub", topics:["projects","sessions","git:my-app","transcript:<sessionId>"] }`. Server pushes:
   - `{ t:"projects.updated", payload: ProjectSummary }` (activity bump, dirty count change)
   - `{ t:"sessions.updated", payload: Session }` (status change, new, exit)
   - `{ t:"git.updated", projectId }` (client refetches status — do not push full diffs)
@@ -150,7 +150,7 @@ POST /api/groups/:id/assign                 { sessionId }   (a session belongs t
 On boot and every 60s, enumerate direct children of `G:\code`. A child with `.git` (dir or file) is a project. Compute **activityAt** = max of:
 1. mtime of `<repo>/.git/index` (touched by stage/commit/status refresh)
 2. mtime of `<repo>/.git/HEAD` and `.git/FETCH_HEAD` if present
-3. newest `*.jsonl` mtime in the matching `~/.claude/projects/<encoded>*` dirs (including subdirectory-cwd variants — a transcript dir `G--code-scenebeans2-sub` also maps to project `scenebeans2`; match by longest prefix against known project paths)
+3. newest `*.jsonl` mtime in the matching `~/.claude/projects/<encoded>*` dirs (including subdirectory-cwd variants — a transcript dir `G--code-my-app-sub` also maps to project `my-app`; match by longest prefix against known project paths)
 4. last PTY activity of any app-owned session for that project
 
 Do **not** recursively stat project contents for recency — too slow across 185 repos.
@@ -158,7 +158,7 @@ Do **not** recursively stat project contents for recency — too slow across 185
 `dirtyCount` and `branch`: run `git status --porcelain=v2 --branch -z` lazily — on project open, on `git.updated`, and for the top 30 projects by activity on boot (parallel, concurrency 8). Cache; invalidate via watcher.
 
 ### 4.2 Encoded-path mapping
-Encoding: full absolute cwd, every character that is not `[A-Za-z0-9-]` replaced with `-` (verify against real dirs in `~/.claude/projects` — e.g. `G:\code\shitpost.gg` → `G--code-shitpost-gg`). Build the reverse map by encoding each known project path and prefix-matching transcript dir names.
+Encoding: full absolute cwd, every character that is not `[A-Za-z0-9-]` replaced with `-` (verify against real dirs in `~/.claude/projects` — e.g. `G:\code\my-site.gg` → `G--code-my-site-gg`). Build the reverse map by encoding each known project path and prefix-matching transcript dir names.
 
 ### 4.3 Watcher tiers (chokidar)
 1. **Root tier**: watch `G:\code` depth 0 — add/remove of project folders.
@@ -218,7 +218,7 @@ Everything through the `git` CLI. All commands run with `cwd` = repo, `env: { GI
 ## 7. Transcripts → the Agent View (the most important feature)
 
 ### 7.1 Ground truth
-Before writing the parser, **read 3–4 real transcripts** from `C:\Users\dested\.claude\projects\G--code-scenebeans2\` (45 sessions available) and `G--code-coterietax-com\`. The parser must be built against the real schema, tolerantly: **unknown line types and unknown content block types must be skipped without error, never crash the feed.**
+Before writing the parser, **read 3–4 real transcripts** from `~/.claude/projects/` (pick a couple of project dirs with plenty of sessions). The parser must be built against the real schema, tolerantly: **unknown line types and unknown content block types must be skipped without error, never crash the feed.**
 
 Known line shapes (verify): each line is JSON with `type`. Relevant types: `user`, `assistant`, `system`, `summary`, `progress`, plus metadata lines (`mode`, `permission-mode`, `file-history-snapshot`, ...). `user`/`assistant` lines carry `{ uuid, parentUuid, timestamp, sessionId, cwd, gitBranch, isSidechain?, message }` where `message` is Anthropic API format: `role`, `content` as string or array of blocks (`text`, `thinking`, `tool_use`, `tool_result`, `image`). Tool results arrive as `user` lines containing `tool_result` blocks referencing `tool_use_id`. Sidechain lines (`isSidechain: true`) are subagent activity.
 

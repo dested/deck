@@ -26,7 +26,7 @@ export function projectColor(name: string): string {
   return `hsl(${projectHue(name)} 55% 55%)`;
 }
 
-// "agent-community" -> "AC", "deck" -> "DE", "shitpost.gg" -> "SG"
+// "agent-community" -> "AC", "deck" -> "DE", "my-site.gg" -> "MS"
 export function projectInitials(name: string): string {
   const parts = name.split(/[-_.\s]+/).filter(Boolean);
   if (parts.length >= 2) {

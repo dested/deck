@@ -1,10 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
-  Kanban,
   Check,
-  Copy,
-  Trash2,
-  Sparkles,
   Loader2,
   Star,
   Inbox,
@@ -12,22 +8,39 @@ import {
   Trophy,
   X,
   ChevronDown,
+  ChevronRight,
   Image as ImageIcon,
   CornerDownLeft,
+  Copy,
+  Trash2,
+  Zap,
+  Heart,
+  CircleSlash,
+  ArrowRight,
   type LucideIcon,
 } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import type { TaskCard, TaskStatus } from "@deck/shared";
 import { useTasksStore } from "../stores/tasksStore";
 import { useProjectsStore } from "../stores/projectsStore";
+import { useUIStore } from "../stores/uiStore";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
-import { relTime } from "../lib/format";
-import { projectGradient } from "../lib/identity";
+import { projectGradient, projectInitials } from "../lib/identity";
+import {
+  LIFE_PROJECT_ID,
+  LIFE_NAME,
+  isLife,
+  focusBuckets,
+  moveTask,
+  moveToStatus,
+} from "../lib/tasks";
 import { Tooltip } from "../components/ui/Tooltip";
 import { menuContent, menuContentStyle, menuItem } from "../components/ui/menuStyles";
 import { toast } from "../components/ui/Toast";
 import { ProjectPicker } from "../components/board/ProjectPicker";
+import { TaskPanel } from "../components/board/TaskPanel";
+import { TriageMode } from "../components/board/TriageMode";
 import {
   type PendingImage,
   imagesFromClipboard,
@@ -35,129 +48,671 @@ import {
   fileToPending,
   uploadPending,
   CardThumbs,
-  EditorImageGrid,
   AddImageTile,
 } from "../components/board/taskImages";
 
-// M17v2 — a personal, manual kanban. Nothing on this board can start a session
-// or an agent; the only automation is drafting a copy-paste prompt on demand.
-// ADHD-first: zero-friction capture, one "Now", no dates, Done fades away.
-
-const COLUMNS: {
-  key: TaskStatus;
-  label: string;
-  icon: LucideIcon;
-  hint: string;
-}[] = [
-  { key: "inbox", label: "Inbox", icon: Inbox, hint: "Dump everything here. No dates, no guilt." },
-  { key: "next", label: "Next", icon: ListTodo, hint: "The short list you actually intend to do." },
-  { key: "now", label: "Now", icon: Star, hint: "The one thing. Just this." },
-  { key: "done", label: "Done", icon: Trophy, hint: "Wins. They fade out after a week." },
-];
+// M17v3 — the Focus Stack. Kanban columns are gone: your reality is a big pile
+// plus one thing, so the view is vertical — NOW hero (impossible to miss), a
+// short ON DECK queue, THE PILE grouped by project (collapsed counts, not card
+// walls), and a quiet wins strip. Triage mode deals the pile one card at a
+// time. Still a pure personal board: nothing here can start a session.
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Optimistic move: paint the store first, then persist; the ws broadcast
-// reconciles either way.
-function moveTask(task: TaskCard, status: TaskStatus, order: number) {
-  useTasksStore.getState().upsert({
-    ...task,
-    status,
-    order,
-    doneAt: status === "done" ? task.doneAt ?? Date.now() : null,
-  });
-  void api.updateTask(task.id, { status, order }).catch(() => {});
-}
-
-// `projectId` set = the project tab's scoped board: only that project's cards,
-// capture auto-assigns it, project chips/pickers are hidden.
+// `projectId` set = the project tab's scoped stack: only that project's cards,
+// capture auto-assigns it, the pile is flat (no groups), pickers hidden.
 export function BoardView({ projectId }: { projectId?: string }) {
   const tasks = useTasksStore((s) => s.byId);
+  const panelId = useUIStore((s) => s.taskPanelId);
+  const setTaskPanel = useUIStore((s) => s.setTaskPanel);
+  const [triage, setTriage] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  const byColumn = useMemo(() => {
-    const map: Record<TaskStatus, TaskCard[]> = { inbox: [], next: [], now: [], done: [] };
-    for (const t of Object.values(tasks)) {
-      if (projectId && t.projectId !== projectId) continue;
-      (map[t.status] ?? map.inbox).push(t);
-    }
-    for (const k of Object.keys(map) as TaskStatus[])
-      map[k].sort((a, b) =>
-        k === "done" ? (b.doneAt ?? 0) - (a.doneAt ?? 0) : a.order - b.order,
-      );
-    return map;
-  }, [tasks, projectId]);
-
+  const b = useMemo(() => focusBuckets(tasks, projectId), [tasks, projectId]);
+  const panelTask = panelId ? tasks[panelId] : undefined;
   const dragTask = dragId ? tasks[dragId] : undefined;
 
-  // Drop on empty column space = append to that column.
-  const dropOnColumn = (col: TaskStatus) => {
+  // Section-level drop = move to that status (append). Rows handle their own
+  // insert-before via onDropBefore.
+  const sectionDrop = (status: TaskStatus) => {
     if (!dragTask) return;
     setDragId(null);
-    if (dragTask.status === col) return;
-    const maxOrder = byColumn[col].reduce((m, t) => Math.max(m, t.order), 0);
-    moveTask(dragTask, col, maxOrder + 1);
+    moveToStatus(dragTask, status);
   };
-
-  // Drop on a card = insert before it (fractional orders keep it cheap).
-  const dropBeforeCard = (col: TaskStatus, target: TaskCard) => {
+  const dropBefore = (target: TaskCard) => {
     if (!dragTask || dragTask.id === target.id) return;
     setDragId(null);
-    if (col === "done") return dropOnColumn(col); // done is doneAt-sorted
-    const cards = byColumn[col].filter((t) => t.id !== dragTask.id);
-    const idx = cards.findIndex((t) => t.id === target.id);
-    const prev = cards[idx - 1];
+    const bucket = b[target.status].filter((t) => t.id !== dragTask.id);
+    const i = bucket.findIndex((t) => t.id === target.id);
+    const prev = bucket[i - 1];
     const order = prev ? (prev.order + target.order) / 2 : target.order - 1;
-    moveTask(dragTask, col, order);
+    moveTask(dragTask, target.status, order);
+  };
+  // Dropping a card on a pile group header files it under that project (and
+  // back into the pile — the group IS an inbox bucket).
+  const dropOnGroup = (pid: string | null) => {
+    if (!dragTask) return;
+    setDragId(null);
+    useTasksStore.getState().upsert({ ...dragTask, projectId: pid, status: "inbox", doneAt: null });
+    void api.updateTask(dragTask.id, { projectId: pid, status: "inbox" }).catch(() => {});
+  };
+  const dnd = {
+    dragging: dragId != null,
+    onDragCard: setDragId,
+    onDragEnd: () => setDragId(null),
+    dropBefore,
+    dropOnGroup,
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {!projectId && (
-        <div className="flex h-12 shrink-0 items-center gap-3 border-b border-hair px-5">
-          <Kanban size={16} className="text-t2" />
-          <span className="text-[14px] font-semibold text-t1">Tasks</span>
-          <span className="text-[11.5px] text-t3">
-            just a board — nothing here runs anything
-          </span>
+    <div className="relative flex h-full min-h-0">
+      <div className="min-h-0 flex-1 overflow-y-auto" style={{ scrollbarGutter: "stable" }}>
+        <div className="mx-auto w-full max-w-[900px] px-5 pb-20">
+          <TaskComposer scopedProjectId={projectId} />
+          <NowSection tasks={b.now} next={b.next} dnd={dnd} onDrop={() => sectionDrop("now")} />
+          <OnDeckSection tasks={b.next} dnd={dnd} onDrop={() => sectionDrop("next")} />
+          <PileSection
+            tasks={b.inbox}
+            grouped={!projectId}
+            dnd={dnd}
+            onDrop={() => sectionDrop("inbox")}
+            onTriage={() => setTriage(true)}
+          />
+          <WinsSection tasks={b.done} onDrop={() => sectionDrop("done")} dnd={dnd} />
+        </div>
+      </div>
+
+      {panelTask && (
+        <TaskPanel
+          task={panelTask}
+          scopedProject={!!projectId}
+          onClose={() => setTaskPanel(null)}
+        />
+      )}
+      {triage && <TriageMode projectId={projectId} onClose={() => setTriage(false)} />}
+    </div>
+  );
+}
+
+interface Dnd {
+  dragging: boolean;
+  onDragCard: (id: string) => void;
+  onDragEnd: () => void;
+  dropBefore: (target: TaskCard) => void;
+  dropOnGroup: (projectId: string | null) => void;
+}
+
+// Shared drag/drop-before props for any task row.
+function rowDnd(task: TaskCard, dnd: Dnd) {
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.effectAllowed = "move";
+      dnd.onDragCard(task.id);
+    },
+    onDragEnd: dnd.onDragEnd,
+    onDragOver: (e: React.DragEvent) => {
+      if (dnd.dragging) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.stopPropagation();
+      dnd.dropBefore(task);
+    },
+  };
+}
+
+function SectionHeader({
+  icon: Icon,
+  label,
+  accent,
+  warn,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  accent?: boolean;
+  warn?: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <Icon
+        size={13}
+        className={warn ? "text-warn" : accent ? "text-accenttext" : "text-t3"}
+      />
+      <span
+        className={cn(
+          "text-[12px] font-semibold uppercase tracking-[0.06em]",
+          warn ? "text-warn" : accent ? "text-accenttext" : "text-t2",
+        )}
+      >
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+// Tiny project identity chip (Life gets a heart, unassigned a dashed slash).
+function ProjectChip({ projectId }: { projectId: string | null }) {
+  const name = useProjectsStore((s) =>
+    projectId && !isLife(projectId) ? s.byId[projectId]?.name ?? projectId : null,
+  );
+  if (isLife(projectId))
+    return (
+      <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-raised px-1.5 py-0.5 text-[10px] text-t3">
+        <span
+          className="flex h-2.5 w-2.5 items-center justify-center rounded-[3px] text-white/85"
+          style={{ background: projectGradient(LIFE_NAME) }}
+        >
+          <Heart size={6} fill="currentColor" />
+        </span>
+        {LIFE_NAME}
+      </span>
+    );
+  if (!name)
+    return (
+      <span className="flex shrink-0 items-center gap-1 rounded-[4px] border border-dashed border-hair px-1.5 py-0.5 text-[10px] text-t3">
+        <CircleSlash size={8} /> no project
+      </span>
+    );
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 rounded-[4px] bg-raised px-1.5 py-0.5 text-[10px] text-t3">
+      <span
+        className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+        style={{ background: projectGradient(name) }}
+      />
+      {name}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NOW — the hero. One big card you cannot miss. Empty = a pull-from-deck
+// invitation, never a guilt trip.
+// ---------------------------------------------------------------------------
+
+function NowSection({
+  tasks,
+  next,
+  dnd,
+  onDrop,
+}: {
+  tasks: TaskCard[];
+  next: TaskCard[];
+  dnd: Dnd;
+  onDrop: () => void;
+}) {
+  const setTaskPanel = useUIStore((s) => s.setTaskPanel);
+  const overloaded = tasks.length > 1;
+
+  return (
+    <section
+      className="mb-6"
+      onDragOver={(e) => dnd.dragging && e.preventDefault()}
+      onDrop={onDrop}
+    >
+      <SectionHeader icon={Star} label="Now" accent warn={overloaded}>
+        {overloaded && <span className="text-[10.5px] text-warn">one thing at a time</span>}
+      </SectionHeader>
+
+      {tasks.length === 0 ? (
+        <div className="flex min-h-[86px] flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed border-hair px-4 py-5 text-center">
+          <p className="text-[12px] text-t3">Nothing in Now.</p>
+          {next[0] ? (
+            <button
+              onClick={() => moveToStatus(next[0]!, "now")}
+              className="flex max-w-full items-center gap-1.5 rounded-[7px] border border-[color:var(--accent)]/40 bg-[color:var(--accent)]/10 px-3 py-1.5 text-[12px] font-medium text-accenttext hover:bg-[color:var(--accent)]/20"
+            >
+              <Star size={12} className="shrink-0" />
+              <span className="truncate">Start: {next[0]!.title}</span>
+            </button>
+          ) : (
+            <p className="text-[11px] text-t3/70">Queue something on deck, then pull it here.</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {tasks.map((t) => (
+            <NowHero key={t.id} task={t} onOpen={() => setTaskPanel(t.id)} dnd={dnd} />
+          ))}
         </div>
       )}
+    </section>
+  );
+}
 
-      <TaskComposer scopedProjectId={projectId} />
+function NowHero({ task, onOpen, dnd }: { task: TaskCard; onOpen: () => void; dnd: Dnd }) {
+  const copyPrompt = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task.prompt) return;
+    void navigator.clipboard?.writeText(task.prompt);
+    toast("Prompt copied — paste it into a Claude session", "info");
+  };
 
-      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 pt-0">
-        {COLUMNS.map((c) => (
-          <BoardColumn
-            key={c.key}
-            col={c}
-            cards={byColumn[c.key]}
-            scopedProjectId={projectId}
-            dragging={dragId != null}
-            onDragCard={setDragId}
-            onDragEnd={() => setDragId(null)}
-            onDropColumn={() => dropOnColumn(c.key)}
-            onDropBeforeCard={(t) => dropBeforeCard(c.key, t)}
-          />
-        ))}
+  return (
+    <div
+      {...rowDnd(task, dnd)}
+      onClick={onOpen}
+      className="cursor-pointer rounded-[12px] border border-[color:var(--accent)]/40 bg-[color:var(--accent)]/5 p-4 transition-colors hover:border-[color:var(--accent)]/60"
+    >
+      <div className="flex items-start gap-3">
+        <Star size={16} className="mt-0.5 shrink-0 text-accenttext" fill="currentColor" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15.5px] font-semibold leading-snug text-t1">{task.title}</h2>
+          {task.body.trim() && (
+            <p className="mt-1 line-clamp-2 whitespace-pre-line text-[12px] leading-relaxed text-t2">
+              {task.body}
+            </p>
+          )}
+          <CardThumbs task={task} />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <ProjectChip projectId={task.projectId} />
+            {task.prompt && (
+              <button
+                onClick={copyPrompt}
+                className="flex items-center gap-1 rounded-[4px] bg-raised px-1.5 py-0.5 text-[10px] text-accenttext hover:bg-overlay"
+              >
+                <Copy size={9} /> prompt
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-1.5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              moveToStatus(task, "done");
+              toast("Win banked 🏆", "info");
+            }}
+            className="flex h-8 items-center gap-1.5 rounded-[7px] border border-[color:var(--ok)]/40 bg-[color:var(--ok)]/10 px-3 text-[12px] font-medium text-ok hover:bg-[color:var(--ok)]/20"
+          >
+            <Check size={13} /> Done
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              moveToStatus(task, "next");
+            }}
+            className="flex h-7 items-center gap-1 rounded-[7px] px-3 text-[11px] text-t3 hover:bg-raised hover:text-t1"
+          >
+            Later <ArrowRight size={11} />
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Composer: one bar, two gears. Enter = quick capture (project already chosen
-// via the inline picker, which stays sticky between adds). Expand for notes,
-// a target column, and image attachments — the ticket is born complete
-// instead of assigned-after.
+// ON DECK — the short curated queue. Compact rows, promote with one click.
+// ---------------------------------------------------------------------------
+
+function OnDeckSection({
+  tasks,
+  dnd,
+  onDrop,
+}: {
+  tasks: TaskCard[];
+  dnd: Dnd;
+  onDrop: () => void;
+}) {
+  return (
+    <section
+      className="mb-6"
+      onDragOver={(e) => dnd.dragging && e.preventDefault()}
+      onDrop={onDrop}
+    >
+      <SectionHeader icon={ListTodo} label="On deck">
+        <span className="mono text-[11px] text-t3">{tasks.length}</span>
+      </SectionHeader>
+      {tasks.length === 0 ? (
+        <p className="rounded-[10px] border border-dashed border-hair px-4 py-3 text-[11.5px] text-t3">
+          The short list you actually intend to do — promote from the pile below.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {tasks.map((t) => (
+            <TaskRow key={t.id} task={t} dnd={dnd} showProject actions="deck" />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE PILE — the inbox, grouped by project so 24 cards read as 4 headers.
+// Triage deals it one card at a time.
+// ---------------------------------------------------------------------------
+
+const NONE_KEY = "__none__";
+
+function PileSection({
+  tasks,
+  grouped,
+  dnd,
+  onDrop,
+  onTriage,
+}: {
+  tasks: TaskCard[];
+  grouped: boolean;
+  dnd: Dnd;
+  onDrop: () => void;
+  onTriage: () => void;
+}) {
+  const projects = useProjectsStore((s) => s.byId);
+  const collapsed = useUIStore((s) => s.taskGroupsCollapsed);
+  const toggleGroup = useUIStore((s) => s.toggleTaskGroup);
+
+  const groups = useMemo(() => {
+    if (!grouped) return null;
+    const map = new Map<string, TaskCard[]>();
+    for (const t of tasks) {
+      const key = t.projectId ?? NONE_KEY;
+      const list = map.get(key) ?? [];
+      list.push(t);
+      map.set(key, list);
+    }
+    // Biggest pile first; unassigned last (it's the least decided).
+    return [...map.entries()].sort((a, b) => {
+      if (a[0] === NONE_KEY) return 1;
+      if (b[0] === NONE_KEY) return -1;
+      return b[1].length - a[1].length;
+    });
+  }, [tasks, grouped]);
+
+  return (
+    <section
+      className="mb-6"
+      onDragOver={(e) => dnd.dragging && e.preventDefault()}
+      onDrop={onDrop}
+    >
+      <SectionHeader icon={Inbox} label="The pile">
+        <span className="mono text-[11px] text-t3">{tasks.length}</span>
+        {tasks.length > 0 && (
+          <button
+            onClick={onTriage}
+            className="ml-auto flex h-7 items-center gap-1.5 rounded-[7px] border border-[color:var(--accent)]/40 bg-[color:var(--accent)]/10 px-2.5 text-[11.5px] font-medium text-accenttext transition-colors hover:bg-[color:var(--accent)]/20"
+          >
+            <Zap size={12} /> Triage {tasks.length}
+          </button>
+        )}
+      </SectionHeader>
+
+      {tasks.length === 0 && (
+        <p className="rounded-[10px] border border-dashed border-hair px-4 py-3 text-[11.5px] text-t3">
+          Pile's empty. Dump everything here — no dates, no guilt.
+        </p>
+      )}
+
+      {!grouped ? (
+        <div className="flex flex-col gap-1">
+          {tasks.map((t) => (
+            <TaskRow key={t.id} task={t} dnd={dnd} actions="pile" />
+          ))}
+        </div>
+      ) : (
+        groups!.map(([key, list]) => {
+          const isNone = key === NONE_KEY;
+          const life = key === LIFE_PROJECT_ID;
+          const name = life ? LIFE_NAME : isNone ? "Unassigned" : projects[key]?.name ?? key;
+          const isCollapsed = !!collapsed[key];
+          return (
+            <div key={key} className="mb-1.5">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleGroup(key)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggleGroup(key)}
+                // Dropping a card on a group header files it under that project.
+                onDragOver={(e) => {
+                  if (dnd.dragging) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                }}
+                onDrop={(e) => {
+                  e.stopPropagation();
+                  dnd.dropOnGroup(isNone ? null : key);
+                }}
+                className="group flex w-full cursor-pointer items-center gap-2 rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-raised/60"
+              >
+                {isCollapsed ? (
+                  <ChevronRight size={12} className="shrink-0 text-t3" />
+                ) : (
+                  <ChevronDown size={12} className="shrink-0 text-t3" />
+                )}
+                {isNone ? (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-dashed border-hair text-t3">
+                    <CircleSlash size={9} />
+                  </span>
+                ) : (
+                  <span
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[8px] font-bold text-white/85"
+                    style={{ background: projectGradient(name) }}
+                  >
+                    {life ? <Heart size={9} fill="currentColor" /> : projectInitials(name)}
+                  </span>
+                )}
+                <span className="text-[12.5px] font-medium text-t1">{name}</span>
+                <span className="mono text-[11px] text-t3">{list.length}</span>
+              </div>
+              {!isCollapsed && (
+                <div className="ml-[26px] flex flex-col gap-0.5 border-l border-hair pl-2">
+                  {list.map((t) => (
+                    <TaskRow key={t.id} task={t} dnd={dnd} actions="pile" />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WINS — done, quiet, fades away. Never a column, never a guilt pile.
+// ---------------------------------------------------------------------------
+
+function WinsSection({
+  tasks,
+  dnd,
+  onDrop,
+}: {
+  tasks: TaskCard[];
+  dnd: Dnd;
+  onDrop: () => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (tasks.length === 0) return null;
+  const shown = showAll ? tasks : tasks.slice(0, 5);
+
+  const clearDone = async () => {
+    if (!confirm(`Delete all ${tasks.length} done cards?`)) return;
+    const { cleared } = await api.clearDoneTasks().catch(() => ({ cleared: 0 }));
+    if (cleared) toast(`Cleared ${cleared} done ${cleared === 1 ? "task" : "tasks"}`, "info");
+  };
+
+  return (
+    <section onDragOver={(e) => dnd.dragging && e.preventDefault()} onDrop={onDrop}>
+      <SectionHeader icon={Trophy} label="Wins">
+        <span className="mono text-[11px] text-t3">{tasks.length}</span>
+        <span className="text-[10.5px] text-t3/70">they fade after a week</span>
+        <button
+          onClick={() => void clearDone()}
+          className="ml-auto rounded-[5px] px-1.5 py-0.5 text-[10.5px] text-t3 hover:bg-raised hover:text-t1"
+        >
+          Clear
+        </button>
+      </SectionHeader>
+      <div className="flex flex-col gap-0.5">
+        {shown.map((t) => (
+          <TaskRow key={t.id} task={t} dnd={dnd} showProject actions="done" />
+        ))}
+      </div>
+      {tasks.length > 5 && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-1 px-1.5 text-[11px] text-t3 hover:text-t1"
+        >
+          {showAll ? "Show fewer" : `+${tasks.length - 5} more`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A single compact task row — one line, hover actions, click opens the panel.
+// ---------------------------------------------------------------------------
+
+function TaskRow({
+  task,
+  dnd,
+  showProject,
+  actions,
+}: {
+  task: TaskCard;
+  dnd: Dnd;
+  showProject?: boolean;
+  actions: "deck" | "pile" | "done";
+}) {
+  const setTaskPanel = useUIStore((s) => s.setTaskPanel);
+  const isDone = actions === "done";
+  const faded = isDone && (task.doneAt ?? 0) < Date.now() - WEEK_MS;
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div
+          {...rowDnd(task, dnd)}
+          onClick={() => setTaskPanel(task.id)}
+          className={cn(
+            "group flex cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 transition-colors hover:bg-raised/70",
+            faded && "opacity-45",
+          )}
+        >
+          {isDone ? (
+            <Check size={12} className="shrink-0 text-ok" />
+          ) : (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-t3/50" />
+          )}
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[12.5px] text-t1",
+              actions === "deck" && "font-medium",
+              isDone && "text-t2 line-through decoration-t3/50",
+            )}
+          >
+            {task.title}
+          </span>
+          {(task.images?.length ?? 0) > 0 && (
+            <ImageIcon size={11} className="shrink-0 text-t3" />
+          )}
+          {task.body.trim() && (
+            <span className="hidden max-w-[220px] truncate text-[11px] text-t3 lg:inline">
+              {task.body.split("\n")[0]}
+            </span>
+          )}
+          {showProject && <ProjectChip projectId={task.projectId} />}
+
+          {/* Hover actions */}
+          {!isDone && (
+            <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              {actions === "pile" && (
+                <Tooltip label="Queue it (On deck)">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveToStatus(task, "next");
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-[5px] text-t3 hover:bg-overlay hover:text-t1"
+                    aria-label="Move to On deck"
+                  >
+                    <ListTodo size={12} />
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip label="Make it the Now">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveToStatus(task, "now");
+                  }}
+                  className="flex h-6 w-6 items-center justify-center rounded-[5px] text-t3 hover:bg-overlay hover:text-accenttext"
+                  aria-label="Move to Now"
+                >
+                  <Star size={12} />
+                </button>
+              </Tooltip>
+              <Tooltip label="Done">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveToStatus(task, "done");
+                  }}
+                  className="flex h-6 w-6 items-center justify-center rounded-[5px] text-t3 hover:bg-overlay hover:text-ok"
+                  aria-label="Mark done"
+                >
+                  <Check size={12} />
+                </button>
+              </Tooltip>
+            </span>
+          )}
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className={menuContent} style={menuContentStyle}>
+          {(
+            [
+              { key: "inbox", label: "the pile", icon: Inbox },
+              { key: "next", label: "On deck", icon: ListTodo },
+              { key: "now", label: "Now", icon: Star },
+              { key: "done", label: "Done", icon: Trophy },
+            ] as { key: TaskStatus; label: string; icon: LucideIcon }[]
+          )
+            .filter((c) => c.key !== task.status)
+            .map((c) => (
+              <ContextMenu.Item
+                key={c.key}
+                className={menuItem}
+                onSelect={() => moveToStatus(task, c.key)}
+              >
+                <c.icon size={13} /> Move to {c.label}
+              </ContextMenu.Item>
+            ))}
+          <ContextMenu.Item
+            className={menuItem}
+            onSelect={() => void api.deleteTask(task.id).catch(() => {})}
+          >
+            <Trash2 size={13} /> Delete
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Composer: one bar, two gears. Enter = quick capture; the edit panel opens on
+// the fresh card but focus STAYS here so dumping continues. Expand for notes,
+// a target section, and image attachments.
 // ---------------------------------------------------------------------------
 
 const TARGETS: { key: Exclude<TaskStatus, "done">; label: string; icon: LucideIcon }[] = [
-  { key: "inbox", label: "Inbox", icon: Inbox },
-  { key: "next", label: "Next", icon: ListTodo },
+  { key: "inbox", label: "Pile", icon: Inbox },
+  { key: "next", label: "On deck", icon: ListTodo },
   { key: "now", label: "Now", icon: Star },
 ];
 
 function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
+  const setTaskPanel = useUIStore((s) => s.setTaskPanel);
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [target, setTarget] = useState<Exclude<TaskStatus, "done">>("inbox");
@@ -185,6 +740,9 @@ function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
         projectId: scopedProjectId ?? project,
         status: target,
       });
+      // Auto-open the edit panel on the fresh card; focus stays here so the
+      // next Enter keeps dumping (each add just swaps the panel).
+      setTaskPanel(card.id);
       if (pending.length)
         await uploadPending(card.id, pending).catch(() =>
           toast("Task added, but some images failed to upload", "error"),
@@ -192,7 +750,6 @@ function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
       setTitle("");
       setNotes("");
       setPending([]);
-      setTarget("inbox");
       setExpanded(false);
       titleRef.current?.focus();
     } catch {
@@ -203,7 +760,7 @@ function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
   };
 
   return (
-    <div className="shrink-0 p-3">
+    <div className="sticky top-0 z-10 -mx-1 bg-root px-1 pb-3 pt-4">
       <div
         onPaste={(e) => {
           const files = imagesFromClipboard(e);
@@ -251,7 +808,7 @@ function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
             </span>
           )}
           {busy && <Loader2 size={14} className="shrink-0 animate-spin text-t3" />}
-          <Tooltip label={expanded ? "Collapse" : "Notes, images, target column"}>
+          <Tooltip label={expanded ? "Collapse" : "Notes, images, target section"}>
             <button
               onClick={() => setExpanded((v) => !v)}
               className={cn(
@@ -327,440 +884,6 @@ function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
             </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function BoardColumn({
-  col,
-  cards,
-  scopedProjectId,
-  dragging,
-  onDragCard,
-  onDragEnd,
-  onDropColumn,
-  onDropBeforeCard,
-}: {
-  col: (typeof COLUMNS)[number];
-  cards: TaskCard[];
-  scopedProjectId?: string;
-  dragging: boolean;
-  onDragCard: (id: string) => void;
-  onDragEnd: () => void;
-  onDropColumn: () => void;
-  onDropBeforeCard: (target: TaskCard) => void;
-}) {
-  const isNow = col.key === "now";
-  const isDone = col.key === "done";
-  const overloaded = isNow && cards.length > 1; // soft limit — nag, don't block
-  const Icon = col.icon;
-
-  const clearDone = async () => {
-    if (!confirm(`Delete all ${cards.length} done cards?`)) return;
-    const { cleared } = await api.clearDoneTasks().catch(() => ({ cleared: 0 }));
-    if (cleared) toast(`Cleared ${cleared} done ${cleared === 1 ? "task" : "tasks"}`, "info");
-  };
-
-  return (
-    <div
-      onDragOver={(e) => dragging && e.preventDefault()}
-      onDrop={onDropColumn}
-      className={cn(
-        "flex w-[300px] shrink-0 flex-col rounded-[10px] border bg-panel",
-        isNow ? "border-[color:var(--accent)]/40" : "border-hair",
-        dragging && "border-hairfocus",
-      )}
-    >
-      <div
-        className={cn(
-          "flex items-center gap-2 border-b border-hair px-3 py-2",
-          isNow && "bg-[color:var(--accent)]/5",
-        )}
-      >
-        <Icon size={13} className={cn(overloaded ? "text-warn" : isNow ? "text-accenttext" : "text-t3")} />
-        <span
-          className={cn(
-            "text-[12px] font-semibold uppercase tracking-[0.05em]",
-            overloaded ? "text-warn" : isNow ? "text-accenttext" : "text-t2",
-          )}
-        >
-          {col.label}
-        </span>
-        <span className="mono text-[11px] text-t3">{cards.length}</span>
-        {overloaded && (
-          <span className="text-[10.5px] text-warn">one thing at a time</span>
-        )}
-        {isDone && cards.length > 0 && (
-          <button
-            onClick={() => void clearDone()}
-            className="ml-auto rounded-[5px] px-1.5 py-0.5 text-[10.5px] text-t3 hover:bg-raised hover:text-t1"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-      <div
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"
-        style={{ scrollbarGutter: "stable" }}
-      >
-        {cards.length === 0 && (
-          <div className="px-2 py-4 text-center text-[11px] leading-relaxed text-t3">
-            {col.hint}
-          </div>
-        )}
-        {cards.map((t) => (
-          <BoardCard
-            key={t.id}
-            task={t}
-            column={col.key}
-            scopedProject={!!scopedProjectId}
-            onDragStart={() => onDragCard(t.id)}
-            onDragEnd={onDragEnd}
-            onDropBefore={() => onDropBeforeCard(t)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BoardCard({
-  task,
-  column,
-  scopedProject,
-  onDragStart,
-  onDragEnd,
-  onDropBefore,
-}: {
-  task: TaskCard;
-  column: TaskStatus;
-  scopedProject: boolean;
-  onDragStart: () => void;
-  onDragEnd: () => void;
-  onDropBefore: () => void;
-}) {
-  const projectName = useProjectsStore((s) =>
-    task.projectId ? s.byId[task.projectId]?.name ?? task.projectId : null,
-  );
-  const [open, setOpen] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const isDone = column === "done";
-  const faded = isDone && (task.doneAt ?? 0) < Date.now() - WEEK_MS;
-
-  const generate = async () => {
-    if (!task.projectId) {
-      toast("Assign a project first — the prompt is written from its cliffnotes", "error");
-      return;
-    }
-    setGenerating(true);
-    try {
-      await api.generateTaskPrompt(task.id);
-      toast("Prompt drafted", "info");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Prompt generation failed", "error");
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const copyPrompt = () => {
-    if (!task.prompt) return;
-    void navigator.clipboard?.writeText(task.prompt);
-    toast("Prompt copied — paste it into a Claude session", "info");
-  };
-
-  const moveTo = (status: TaskStatus) => {
-    const all = Object.values(useTasksStore.getState().byId);
-    const maxOrder = all
-      .filter((t) => t.status === status)
-      .reduce((m, t) => Math.max(m, t.order), 0);
-    moveTask(task, status, maxOrder + 1);
-  };
-
-  return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        <div
-          draggable={!open}
-          onDragStart={(e) => {
-            e.dataTransfer.effectAllowed = "move";
-            onDragStart();
-          }}
-          onDragEnd={onDragEnd}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          onDrop={(e) => {
-            e.stopPropagation();
-            onDropBefore();
-          }}
-          onClick={() => !open && setOpen(true)}
-          className={cn(
-            "rounded-[8px] border border-hair bg-raised p-2.5 transition-opacity",
-            !open && "cursor-default hover:border-hairfocus",
-            faded && "opacity-45",
-          )}
-        >
-          {open ? (
-            <CardEditor
-              task={task}
-              scopedProject={scopedProject}
-              generating={generating}
-              onGenerate={generate}
-              onCopy={copyPrompt}
-              onClose={() => setOpen(false)}
-            />
-          ) : (
-            <>
-              <div className="flex items-start gap-1.5">
-                {isDone ? (
-                  <Check size={13} className="mt-0.5 shrink-0 text-ok" />
-                ) : (
-                  <span
-                    className={cn(
-                      "mt-1 h-2 w-2 shrink-0 rounded-full",
-                      column === "now" ? "bg-[color:var(--accent)]" : "bg-t3/40",
-                    )}
-                  />
-                )}
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 text-[12.5px] font-medium text-t1",
-                    isDone && "text-t2 line-through decoration-t3/50",
-                  )}
-                >
-                  {task.title}
-                </span>
-              </div>
-              {task.body.trim() && (
-                <p className="mt-1 line-clamp-2 whitespace-pre-line pl-[14px] text-[11px] text-t2">
-                  {task.body}
-                </p>
-              )}
-              <CardThumbs task={task} />
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-[14px]">
-                {!scopedProject &&
-                  (projectName ? (
-                    <span className="flex items-center gap-1.5 rounded-[4px] bg-panel px-1.5 py-0.5 text-[10px] text-t3">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                        style={{ background: projectGradient(projectName) }}
-                      />
-                      {projectName}
-                    </span>
-                  ) : (
-                    <span className="rounded-[4px] border border-dashed border-hair px-1.5 py-0.5 text-[10px] text-t3">
-                      no project
-                    </span>
-                  ))}
-                {task.prompt && !isDone && (
-                  <Tooltip label="Copy the drafted prompt">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyPrompt();
-                      }}
-                      className="flex items-center gap-1 rounded-[4px] bg-panel px-1.5 py-0.5 text-[10px] text-accenttext hover:bg-overlay"
-                    >
-                      <Copy size={9} /> prompt
-                    </button>
-                  </Tooltip>
-                )}
-                {generating && (
-                  <Loader2 size={11} className="animate-spin text-t3" />
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className={menuContent} style={menuContentStyle}>
-          {COLUMNS.filter((c) => c.key !== column).map((c) => (
-            <ContextMenu.Item
-              key={c.key}
-              className={menuItem}
-              onSelect={() => moveTo(c.key)}
-            >
-              <c.icon size={13} /> Move to {c.label}
-            </ContextMenu.Item>
-          ))}
-          <ContextMenu.Item
-            className={menuItem}
-            onSelect={() => void api.deleteTask(task.id).catch(() => {})}
-          >
-            <Trash2 size={13} /> Delete
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
-  );
-}
-
-// Inline expanded editor. Fields save on blur; the prompt is editable too (it's
-// yours once generated). Images paste/drop/upload straight onto the card.
-function CardEditor({
-  task,
-  scopedProject,
-  generating,
-  onGenerate,
-  onCopy,
-  onClose,
-}: {
-  task: TaskCard;
-  scopedProject: boolean;
-  generating: boolean;
-  onGenerate: () => void;
-  onCopy: () => void;
-  onClose: () => void;
-}) {
-  const [title, setTitle] = useState(task.title);
-  const [body, setBody] = useState(task.body);
-  const [prompt, setPrompt] = useState(task.prompt ?? "");
-  const promptDirty = useRef(false);
-
-  // The generate call updates the card server-side; mirror it in when we're
-  // not mid-edit ourselves.
-  if (!promptDirty.current && (task.prompt ?? "") !== prompt) {
-    setPrompt(task.prompt ?? "");
-  }
-
-  const save = (patch: Parameters<typeof api.updateTask>[1]) =>
-    void api.updateTask(task.id, patch).catch(() => {});
-
-  const uploadFiles = async (files: File[]) => {
-    try {
-      for (const f of files) {
-        const p = await fileToPending(f);
-        await api.addTaskImage(task.id, {
-          data: p.dataUrl,
-          name: p.name,
-          w: p.w,
-          h: p.h,
-        });
-      }
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Image upload failed", "error");
-    }
-  };
-
-  return (
-    <div
-      onClick={(e) => e.stopPropagation()}
-      onPaste={(e) => {
-        const files = imagesFromClipboard(e);
-        if (files.length) {
-          e.preventDefault();
-          void uploadFiles(files);
-        }
-      }}
-      onDragOver={(e) => {
-        if (e.dataTransfer?.types.includes("Files")) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={(e) => {
-        const files = imagesFromDrop(e);
-        if (files.length) {
-          e.preventDefault();
-          e.stopPropagation();
-          void uploadFiles(files);
-        }
-      }}
-    >
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <input
-          autoFocus
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          className="h-7 min-w-0 flex-1 rounded-[5px] border border-hair bg-panel px-2 text-[12.5px] font-medium text-t1 focus:border-hairfocus focus:outline-none"
-        />
-        <button
-          onClick={onClose}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-t3 hover:bg-panel hover:text-t1"
-          aria-label="Collapse"
-        >
-          <X size={13} />
-        </button>
-      </div>
-      {!scopedProject && (
-        <div className="mb-1.5">
-          <ProjectPicker
-            block
-            value={task.projectId}
-            onChange={(id) => save({ projectId: id })}
-          />
-        </div>
-      )}
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onBlur={() => body !== task.body && save({ body })}
-        placeholder="Notes / description — paste images anywhere…"
-        rows={3}
-        className="mb-1.5 w-full resize-none rounded-[5px] border border-hair bg-panel p-2 text-[12px] text-t1 placeholder:text-t3 focus:border-hairfocus focus:outline-none"
-      />
-
-      <EditorImageGrid task={task} onAddFiles={(f) => void uploadFiles(f)} />
-
-      {task.prompt != null && (
-        <textarea
-          value={prompt}
-          onChange={(e) => {
-            promptDirty.current = true;
-            setPrompt(e.target.value);
-          }}
-          onBlur={() => {
-            promptDirty.current = false;
-            if (prompt !== (task.prompt ?? "")) save({ prompt: prompt || null });
-          }}
-          rows={6}
-          className="mono mb-1.5 w-full resize-y rounded-[5px] border border-hair bg-panel p-2 text-[11.5px] leading-relaxed text-t1 focus:border-hairfocus focus:outline-none"
-        />
-      )}
-
-      <div className="flex items-center gap-1.5">
-        <Tooltip
-          label={
-            task.projectId
-              ? "Draft a Claude Code prompt from this card + the project's cliffnotes"
-              : "Assign a project first"
-          }
-        >
-          <button
-            onClick={onGenerate}
-            disabled={generating || !task.projectId}
-            className="flex h-7 items-center gap-1 rounded-[6px] border border-hair bg-panel px-2 text-[11.5px] text-t2 hover:bg-overlay hover:text-t1 disabled:opacity-40"
-          >
-            {generating ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Sparkles size={12} />
-            )}
-            {task.prompt ? "Redraft prompt" : "Draft prompt"}
-          </button>
-        </Tooltip>
-        {task.prompt && (
-          <button
-            onClick={onCopy}
-            className="flex h-7 items-center gap-1 rounded-[6px] border border-hair bg-panel px-2 text-[11.5px] text-accenttext hover:bg-overlay"
-          >
-            <Copy size={12} /> Copy
-          </button>
-        )}
-        <span className="ml-auto text-[10px] text-t3">added {relTime(task.createdAt)}</span>
-        <button
-          onClick={() => void api.deleteTask(task.id).catch(() => {})}
-          className="flex h-7 w-7 items-center justify-center rounded-[6px] text-t3 hover:bg-panel hover:text-err"
-          aria-label="Delete task"
-        >
-          <Trash2 size={13} />
-        </button>
       </div>
     </div>
   );
