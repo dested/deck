@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "DECK_DEV=1 tsx watch src/index.ts",
-    "start": "NODE_ENV=production tsx src/index.ts",
+    "start": "node scripts/supervise.mjs",
+    "start:unsupervised": "NODE_ENV=production tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

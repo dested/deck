@@ -147,7 +147,7 @@ export function Feed({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="h-full overflow-y-auto px-5 py-4"
+        className="h-full overflow-y-auto px-5 py-4 font-mono text-[12.5px] leading-[1.55]"
         style={{ scrollbarGutter: "stable", overflowAnchor: "none" }}
       >
         {loading && events.length === 0 && (
@@ -158,7 +158,12 @@ export function Feed({
           </div>
         )}
         <div
-          style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}
+          style={{
+            height: virtualizer.getTotalSize(),
+            position: "relative",
+            width: "100%",
+            maxWidth: "108ch",
+          }}
         >
           {items.map((vi) => {
             const ev = events[vi.index];

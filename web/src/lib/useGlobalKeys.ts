@@ -26,6 +26,12 @@ export function useGlobalKeys() {
         ui.setPaletteOpen(!ui.paletteOpen);
         return;
       }
+      // Ctrl+Shift+B — toggle sidebar mode (expanded mission-control ↔ compact rail)
+      if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        ui.toggleSidebarMode();
+        return;
+      }
       // Ctrl+B — toggle sidebar
       if (mod && e.key.toLowerCase() === "b") {
         e.preventDefault();

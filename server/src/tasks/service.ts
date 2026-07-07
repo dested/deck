@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { TaskCard, TaskStatus } from "@deck/shared";
+import type { TaskCard, TaskImage, TaskStatus } from "@deck/shared";
+import { config } from "../config.js";
 import { getState, updateState } from "../state.js";
 import { eventHub, topics } from "../ws/events.js";
 import { projectRegistry } from "../projects/registry.js";
@@ -36,13 +37,128 @@ function pruneOldDone() {
   updateState((s) => {
     s.tasks = s.tasks.filter((t) => !stale.includes(t));
   });
-  for (const t of stale) broadcastRemoved(t.id);
+  for (const t of stale) {
+    deleteImageFiles(t);
+    broadcastRemoved(t.id);
+  }
 }
+
+// ----- attached images (bytes on disk, index on the card) -----
+
+const imagesDir = () => path.join(config.deckStateDir, "task-images");
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+const MAX_IMAGES_PER_TASK = 12;
+
+const MIME_EXT: Record<string, TaskImage["ext"]> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+
+export function imageFilePath(taskId: string, img: TaskImage): string {
+  return path.join(imagesDir(), `${taskId}-${img.id}.${img.ext}`);
+}
+
+function deleteImageFiles(task: TaskCard) {
+  for (const img of task.images ?? []) {
+    try {
+      fs.rmSync(imageFilePath(task.id, img), { force: true });
+    } catch {
+      /* best effort — an orphaned file is harmless */
+    }
+  }
+}
+
+// `data` is a data URL (data:image/png;base64,...) straight from the client's
+// clipboard/file reader. Throws with a user-facing message on bad input.
+export function addTaskImage(
+  taskId: string,
+  input: { data: string; name?: string; w?: number; h?: number },
+): TaskCard {
+  const task = getState().tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error("task not found");
+  if ((task.images ?? []).length >= MAX_IMAGES_PER_TASK)
+    throw new Error(`max ${MAX_IMAGES_PER_TASK} images per card`);
+
+  const m = /^data:([a-z/+.-]+);base64,(.+)$/is.exec(input.data ?? "");
+  if (!m) throw new Error("expected a base64 data URL");
+  const ext = MIME_EXT[m[1]!.toLowerCase()];
+  if (!ext) throw new Error("unsupported image type (png/jpg/gif/webp only)");
+  const buf = Buffer.from(m[2]!, "base64");
+  if (!buf.length) throw new Error("empty image");
+  if (buf.length > MAX_IMAGE_BYTES) throw new Error("image too large (15MB max)");
+
+  const img: TaskImage = {
+    id: randomUUID(),
+    ext,
+    name: (input.name ?? "").trim().slice(0, 120) || "pasted image",
+    addedAt: Date.now(),
+    ...(input.w && input.h ? { w: Math.round(input.w), h: Math.round(input.h) } : {}),
+  };
+  fs.mkdirSync(imagesDir(), { recursive: true });
+  fs.writeFileSync(imageFilePath(taskId, img), buf);
+
+  let updated: TaskCard | null = null;
+  updateState((s) => {
+    const t = s.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    t.images = [...(t.images ?? []), img];
+    updated = { ...t };
+  });
+  if (!updated) {
+    // task vanished between the read and the write — don't leak the file
+    try {
+      fs.rmSync(imageFilePath(taskId, img), { force: true });
+    } catch {
+      /* ignore */
+    }
+    throw new Error("task not found");
+  }
+  broadcastTask(updated);
+  return updated;
+}
+
+export function removeTaskImage(taskId: string, imageId: string): TaskCard | null {
+  let updated: TaskCard | null = null;
+  let removed: TaskImage | undefined;
+  updateState((s) => {
+    const t = s.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    removed = (t.images ?? []).find((i) => i.id === imageId);
+    if (!removed) return;
+    t.images = t.images.filter((i) => i.id !== imageId);
+    updated = { ...t };
+  });
+  if (!updated || !removed) return null;
+  try {
+    fs.rmSync(imageFilePath(taskId, removed), { force: true });
+  } catch {
+    /* best effort */
+  }
+  broadcastTask(updated);
+  return updated;
+}
+
+export function getTaskImage(
+  taskId: string,
+  imageId: string,
+): { img: TaskImage; file: string } | null {
+  const task = getState().tasks.find((t) => t.id === taskId);
+  const img = task?.images?.find((i) => i.id === imageId);
+  if (!task || !img) return null;
+  return { img, file: imageFilePath(taskId, img) };
+}
+
+// The composer can capture straight into Next/Now, not just Inbox (never
+// directly into Done — that's not how wins work).
+const CREATABLE: TaskStatus[] = ["inbox", "next", "now"];
 
 export function createTask(input: {
   title: string;
   body?: string;
   projectId?: string | null;
+  status?: TaskStatus;
 }): TaskCard {
   const maxOrder = getState().tasks.reduce((m, t) => Math.max(m, t.order), 0);
   const card: TaskCard = {
@@ -51,10 +167,11 @@ export function createTask(input: {
     body: input.body ?? "",
     projectId: input.projectId ?? null,
     prompt: null,
+    images: [],
     createdAt: Date.now(),
     doneAt: null,
     order: maxOrder + 1,
-    status: "inbox",
+    status: input.status && CREATABLE.includes(input.status) ? input.status : "inbox",
   };
   updateState((s) => {
     s.tasks.push(card);
@@ -73,6 +190,7 @@ function pruneCap(tasks: TaskCard[]) {
   for (const d of done.slice(0, overflow)) {
     const idx = tasks.indexOf(d);
     if (idx >= 0) tasks.splice(idx, 1);
+    deleteImageFiles(d);
   }
 }
 
@@ -103,27 +221,32 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): boolean {
+  const victim = getState().tasks.find((t) => t.id === id);
   let found = false;
   updateState((s) => {
     const before = s.tasks.length;
     s.tasks = s.tasks.filter((t) => t.id !== id);
     found = s.tasks.length !== before;
   });
-  if (found) broadcastRemoved(id);
+  if (found) {
+    if (victim) deleteImageFiles(victim);
+    broadcastRemoved(id);
+  }
   return found;
 }
 
 // Delete every Done card at once (the board's "Clear" button).
 export function clearDone(): number {
-  const doneIds = getState()
-    .tasks.filter((t) => t.status === "done")
-    .map((t) => t.id);
-  if (!doneIds.length) return 0;
+  const done = getState().tasks.filter((t) => t.status === "done");
+  if (!done.length) return 0;
   updateState((s) => {
     s.tasks = s.tasks.filter((t) => t.status !== "done");
   });
-  for (const id of doneIds) broadcastRemoved(id);
-  return doneIds.length;
+  for (const t of done) {
+    deleteImageFiles(t);
+    broadcastRemoved(t.id);
+  }
+  return done.length;
 }
 
 const CLIFFNOTES_CAP = 14_000; // chars of cliffnotes context sent to the model

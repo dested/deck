@@ -11,17 +11,33 @@ import {
   ListTodo,
   Trophy,
   X,
+  ChevronDown,
+  Image as ImageIcon,
+  CornerDownLeft,
   type LucideIcon,
 } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import type { TaskCard, TaskStatus } from "@deck/shared";
 import { useTasksStore } from "../stores/tasksStore";
-import { useProjectsStore, selectSortedProjects } from "../stores/projectsStore";
+import { useProjectsStore } from "../stores/projectsStore";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
+import { relTime } from "../lib/format";
+import { projectGradient } from "../lib/identity";
 import { Tooltip } from "../components/ui/Tooltip";
 import { menuContent, menuContentStyle, menuItem } from "../components/ui/menuStyles";
 import { toast } from "../components/ui/Toast";
+import { ProjectPicker } from "../components/board/ProjectPicker";
+import {
+  type PendingImage,
+  imagesFromClipboard,
+  imagesFromDrop,
+  fileToPending,
+  uploadPending,
+  CardThumbs,
+  EditorImageGrid,
+  AddImageTile,
+} from "../components/board/taskImages";
 
 // M17v2 — a personal, manual kanban. Nothing on this board can start a session
 // or an agent; the only automation is drafting a copy-paste prompt on demand.
@@ -54,7 +70,7 @@ function moveTask(task: TaskCard, status: TaskStatus, order: number) {
 }
 
 // `projectId` set = the project tab's scoped board: only that project's cards,
-// capture auto-assigns it, project chips/selects are hidden.
+// capture auto-assigns it, project chips/pickers are hidden.
 export function BoardView({ projectId }: { projectId?: string }) {
   const tasks = useTasksStore((s) => s.byId);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -107,7 +123,7 @@ export function BoardView({ projectId }: { projectId?: string }) {
         </div>
       )}
 
-      <CaptureBar projectId={projectId} />
+      <TaskComposer scopedProjectId={projectId} />
 
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 pt-0">
         {COLUMNS.map((c) => (
@@ -128,31 +144,190 @@ export function BoardView({ projectId }: { projectId?: string }) {
   );
 }
 
-// One always-there input. Type, Enter, it's captured into Inbox — project and
-// details can come later (or never).
-function CaptureBar({ projectId }: { projectId?: string }) {
-  const [title, setTitle] = useState("");
+// ---------------------------------------------------------------------------
+// Composer: one bar, two gears. Enter = quick capture (project already chosen
+// via the inline picker, which stays sticky between adds). Expand for notes,
+// a target column, and image attachments — the ticket is born complete
+// instead of assigned-after.
+// ---------------------------------------------------------------------------
 
-  const add = async () => {
+const TARGETS: { key: Exclude<TaskStatus, "done">; label: string; icon: LucideIcon }[] = [
+  { key: "inbox", label: "Inbox", icon: Inbox },
+  { key: "next", label: "Next", icon: ListTodo },
+  { key: "now", label: "Now", icon: Star },
+];
+
+function TaskComposer({ scopedProjectId }: { scopedProjectId?: string }) {
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [target, setTarget] = useState<Exclude<TaskStatus, "done">>("inbox");
+  const [project, setProject] = useState<string | null>(null); // sticky between adds
+  const [pending, setPending] = useState<PendingImage[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  const attach = async (files: File[]) => {
+    if (!files.length) return;
+    const imgs = await Promise.all(files.map(fileToPending));
+    setPending((p) => [...p, ...imgs]);
+    setExpanded(true);
+  };
+
+  const submit = async () => {
     const t = title.trim();
-    if (!t) return;
-    setTitle("");
-    await api
-      .createTask({ title: t, projectId: projectId ?? null })
-      .catch(() => toast("Failed to add task", "error"));
+    if (!t || busy) return;
+    setBusy(true);
+    try {
+      const card = await api.createTask({
+        title: t,
+        body: notes.trim() || undefined,
+        projectId: scopedProjectId ?? project,
+        status: target,
+      });
+      if (pending.length)
+        await uploadPending(card.id, pending).catch(() =>
+          toast("Task added, but some images failed to upload", "error"),
+        );
+      setTitle("");
+      setNotes("");
+      setPending([]);
+      setTarget("inbox");
+      setExpanded(false);
+      titleRef.current?.focus();
+    } catch {
+      toast("Failed to add task", "error");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="shrink-0 p-3">
-      <input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void add();
+      <div
+        onPaste={(e) => {
+          const files = imagesFromClipboard(e);
+          if (files.length) {
+            e.preventDefault();
+            void attach(files);
+          }
         }}
-        placeholder="Dump a task — Enter to add, sort it out later…"
-        className="h-9 w-full rounded-[8px] border border-hair bg-panel px-3 text-[13px] text-t1 placeholder:text-t3 focus:border-hairfocus focus:outline-none"
-      />
+        onDragOver={(e) => {
+          if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const files = imagesFromDrop(e);
+          if (files.length) {
+            e.preventDefault();
+            void attach(files);
+          }
+        }}
+        onKeyDown={(e) => {
+          // defaultPrevented = Radix already used this Escape to close a popover
+          if (e.key === "Escape" && !e.defaultPrevented && expanded) setExpanded(false);
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void submit();
+        }}
+        className="rounded-[10px] border border-hair bg-panel transition-colors focus-within:border-hairfocus"
+      >
+        <div className="flex items-center gap-2 px-2">
+          {!scopedProjectId && <ProjectPicker value={project} onChange={setProject} />}
+          <input
+            ref={titleRef}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) void submit();
+            }}
+            placeholder={
+              expanded
+                ? "Task title…"
+                : "Dump a task — Enter to add, paste a screenshot, expand for details…"
+            }
+            className="h-10 min-w-0 flex-1 bg-transparent text-[13px] text-t1 placeholder:text-t3 focus:outline-none"
+          />
+          {!expanded && pending.length > 0 && (
+            <span className="flex shrink-0 items-center gap-1 text-[11px] text-t3">
+              <ImageIcon size={12} /> {pending.length}
+            </span>
+          )}
+          {busy && <Loader2 size={14} className="shrink-0 animate-spin text-t3" />}
+          <Tooltip label={expanded ? "Collapse" : "Notes, images, target column"}>
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className={cn(
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-t3 transition-colors hover:bg-raised hover:text-t1",
+                expanded && "bg-raised text-t1",
+              )}
+              aria-label={expanded ? "Collapse composer" : "Expand composer"}
+            >
+              <ChevronDown
+                size={14}
+                className={cn("transition-transform", expanded && "rotate-180")}
+              />
+            </button>
+          </Tooltip>
+        </div>
+
+        {expanded && (
+          <div className="flex flex-col gap-2 border-t border-hair p-2">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Notes / description — paste images anywhere…"
+              rows={3}
+              className="w-full resize-none rounded-[6px] border border-hair bg-raised p-2 text-[12.5px] text-t1 placeholder:text-t3 focus:border-hairfocus focus:outline-none"
+            />
+
+            <div className="flex flex-wrap gap-1.5">
+              {pending.map((p) => (
+                <div
+                  key={p.key}
+                  className="group/img relative h-16 w-24 overflow-hidden rounded-[6px] border border-hair"
+                >
+                  <img src={p.dataUrl} alt={p.name} className="h-full w-full object-cover" />
+                  <button
+                    onClick={() => setPending((v) => v.filter((x) => x.key !== p.key))}
+                    className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-[4px] bg-black/60 text-white/90 opacity-0 transition-opacity hover:bg-black/80 group-hover/img:opacity-100"
+                    aria-label={`Remove ${p.name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              <AddImageTile onFiles={(f) => void attach(f)} className="h-16 w-24" />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex overflow-hidden rounded-[6px] border border-hair">
+                {TARGETS.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setTarget(t.key)}
+                    className={cn(
+                      "flex h-7 items-center gap-1 px-2 text-[11.5px] transition-colors",
+                      target === t.key
+                        ? "bg-raised font-medium text-t1"
+                        : "text-t3 hover:bg-raised/60 hover:text-t2",
+                    )}
+                  >
+                    <t.icon size={11} /> {t.label}
+                  </button>
+                ))}
+              </div>
+              <span className="ml-auto flex items-center gap-1 text-[10.5px] text-t3">
+                <CornerDownLeft size={10} /> Enter adds
+              </span>
+              <button
+                onClick={() => void submit()}
+                disabled={!title.trim() || busy}
+                className="h-7 rounded-[6px] bg-accent px-3 text-[12px] font-medium text-white transition-opacity disabled:opacity-40"
+              >
+                Add task
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -364,14 +539,19 @@ function BoardCard({
                   {task.body}
                 </p>
               )}
+              <CardThumbs task={task} />
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-[14px]">
                 {!scopedProject &&
                   (projectName ? (
-                    <span className="mono rounded-[4px] bg-panel px-1.5 py-0.5 text-[10px] text-t3">
+                    <span className="flex items-center gap-1.5 rounded-[4px] bg-panel px-1.5 py-0.5 text-[10px] text-t3">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                        style={{ background: projectGradient(projectName) }}
+                      />
                       {projectName}
                     </span>
                   ) : (
-                    <span className="mono rounded-[4px] border border-dashed border-hair px-1.5 py-0.5 text-[10px] text-t3">
+                    <span className="rounded-[4px] border border-dashed border-hair px-1.5 py-0.5 text-[10px] text-t3">
                       no project
                     </span>
                   ))}
@@ -420,7 +600,7 @@ function BoardCard({
 }
 
 // Inline expanded editor. Fields save on blur; the prompt is editable too (it's
-// yours once generated).
+// yours once generated). Images paste/drop/upload straight onto the card.
 function CardEditor({
   task,
   scopedProject,
@@ -436,7 +616,6 @@ function CardEditor({
   onCopy: () => void;
   onClose: () => void;
 }) {
-  const projects = useProjectsStore((s) => s.byId);
   const [title, setTitle] = useState(task.title);
   const [body, setBody] = useState(task.body);
   const [prompt, setPrompt] = useState(task.prompt ?? "");
@@ -448,13 +627,50 @@ function CardEditor({
     setPrompt(task.prompt ?? "");
   }
 
-  const sorted = selectSortedProjects(projects).filter((p) => p.kind !== "root");
-
   const save = (patch: Parameters<typeof api.updateTask>[1]) =>
     void api.updateTask(task.id, patch).catch(() => {});
 
+  const uploadFiles = async (files: File[]) => {
+    try {
+      for (const f of files) {
+        const p = await fileToPending(f);
+        await api.addTaskImage(task.id, {
+          data: p.dataUrl,
+          name: p.name,
+          w: p.w,
+          h: p.h,
+        });
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Image upload failed", "error");
+    }
+  };
+
   return (
-    <div onClick={(e) => e.stopPropagation()}>
+    <div
+      onClick={(e) => e.stopPropagation()}
+      onPaste={(e) => {
+        const files = imagesFromClipboard(e);
+        if (files.length) {
+          e.preventDefault();
+          void uploadFiles(files);
+        }
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes("Files")) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      onDrop={(e) => {
+        const files = imagesFromDrop(e);
+        if (files.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          void uploadFiles(files);
+        }
+      }}
+    >
       <div className="mb-1.5 flex items-center gap-1.5">
         <input
           autoFocus
@@ -473,27 +689,24 @@ function CardEditor({
         </button>
       </div>
       {!scopedProject && (
-        <select
-          value={task.projectId ?? ""}
-          onChange={(e) => save({ projectId: e.target.value || null })}
-          className="mb-1.5 h-7 w-full rounded-[5px] border border-hair bg-panel px-1.5 text-[12px] text-t2 focus:border-hairfocus focus:outline-none"
-        >
-          <option value="">No project</option>
-          {sorted.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <div className="mb-1.5">
+          <ProjectPicker
+            block
+            value={task.projectId}
+            onChange={(id) => save({ projectId: id })}
+          />
+        </div>
       )}
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onBlur={() => body !== task.body && save({ body })}
-        placeholder="Notes / description…"
+        placeholder="Notes / description — paste images anywhere…"
         rows={3}
         className="mb-1.5 w-full resize-none rounded-[5px] border border-hair bg-panel p-2 text-[12px] text-t1 placeholder:text-t3 focus:border-hairfocus focus:outline-none"
       />
+
+      <EditorImageGrid task={task} onAddFiles={(f) => void uploadFiles(f)} />
 
       {task.prompt != null && (
         <textarea
@@ -540,9 +753,10 @@ function CardEditor({
             <Copy size={12} /> Copy
           </button>
         )}
+        <span className="ml-auto text-[10px] text-t3">added {relTime(task.createdAt)}</span>
         <button
           onClick={() => void api.deleteTask(task.id).catch(() => {})}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-[6px] text-t3 hover:bg-panel hover:text-err"
+          className="flex h-7 w-7 items-center justify-center rounded-[6px] text-t3 hover:bg-panel hover:text-err"
           aria-label="Delete task"
         >
           <Trash2 size={13} />

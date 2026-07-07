@@ -93,6 +93,7 @@ class TranscriptRegistry {
     lastActivityLine: string | null;
     title: string | null;
     stats: AgentStats;
+    firstPrompt: string | null;
   } | null {
     const meta = this.index.get(transcriptId);
     const parsed = this.getParsed(transcriptId);
@@ -103,6 +104,7 @@ class TranscriptRegistry {
       lastActivityLine: lastActivityLine(parsed.events),
       title: parsed.title,
       stats: computeStats(parsed.events, parsed.model),
+      firstPrompt: parsed.firstPrompt,
     };
   }
 
@@ -235,6 +237,7 @@ class TranscriptRegistry {
       title: parsed.title,
       stats: computeStats(parsed.events, parsed.model),
       aiMeta: this.aiMeta.get(meta.sessionId) ?? null,
+      firstPrompt: parsed.firstPrompt,
     };
   }
 

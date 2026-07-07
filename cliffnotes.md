@@ -7,7 +7,17 @@
 Last updated: M0–M6 complete + verified (2026-07-04); **V2 M7–M17 built**
 (2026-07-05, typecheck + prod build green, live UI unverified — see V2 section).
 **V3 M18–M20 built** (2026-07-05, no spec — built direct; see V3 section).
-**Task board rewritten to M17v2** (2026-07-06, personal kanban — see its section).
+**Task board rewritten to M17v2** (2026-07-06, personal kanban — see its section;
+2026-07-07: card images + rich ProjectPicker + fuller capture composer).
+**Bulletproofed** (2026-07-06): crash guard + supervisor auto-restart + durable
+scrollback/state — see the Bulletproofing section.
+**Expanded mission-control sidebar** (2026-07-07): two-mode rail + per-agent
+original-prompt (`Session.firstPrompt`) — see its section.
+**PR Audit** (2026-07-07): AI pre-merge report + Q&A in the Git tab — see its
+section.
+**Transcript feed → CC terminal look** (2026-07-07): the read-only agent feed
+now renders like Claude Code's own terminal (monospace, `●` bullets, `⎿` result
+branches) — see its section.
 
 **V2 feature spec: `SPEC2.md`** (2026-07-05) — M7–M17: **all built** (typecheck
 + prod web build green; live UI not yet exercised). See the V2 section below.
@@ -40,11 +50,17 @@ re-exports). Routes `routes/ai.ts`: `GET /ai/usage|config`, `PATCH /ai/config`,
 `web/src/views/AiAdminView.tsx` (top-level view). Config: `aiScratchDir`
 (`~/.deck/ai`), `anthropicApiKey`, `digestAt`.
 
-**M12 — AI tab titles/summaries.** `ai/liveMeta.ts` 120s ticker labels sessions
-with an OPEN tab/feed only (owned live + subscribed transcripts via
-`eventHub.hasSubscribers`), change-gated (transcript sig / ring-tail sha1),
-`Session.aiMeta`. Client title precedence via `lib/sessions.ts displayTitle()`
-(user rename > aiMeta.title > default name matching `/ (sh|cc)·[0-9a-f]{4}$/`).
+**M12 — AI tab titles/summaries.** `ai/liveMeta.ts` **20s** ticker (was 120s +
+open-tab-only, revised 2026-07-07) labels **every live session the sidebar
+shows**: owned live sessions + **all `externalSessions()` (<30min)** — no longer
+gated on a subscribed feed, so a card never sits on its raw `proj cc·1a2b`
+default while active. Kept cheap by: haiku (`tabTitle` feature, budget bumped
+0.5→$1.0/day), a change-gate (transcript sig / ring-tail sha1), a **per-session
+60s cooldown** (`shouldLabel`, so a busy session isn't re-billed every tick),
+and a lean context (last 12 events ≤200 chars each, anchored with `goal:` =
+`firstPrompt`). `Session.aiMeta`. Client title precedence via `lib/sessions.ts
+displayTitle()` (user rename > aiMeta.title > default name matching
+`/ (sh|cc)·[0-9a-f]{4}$/`). Budget trip is graceful — card keeps its last title.
 
 **M8 — Attention Inbox.** `pty/manager.tail()`, prompt-tail extraction in the 5s
 status ticker (`Session.promptTail`), `POST /sessions/:id/read`. Client
@@ -228,6 +244,109 @@ found". Now they **reconnect to what's on disk** instead.
   Verified in isolation (ANSI strip/tail round-trip + real transcript parse, 12/12);
   live browser flow untested (needs prod rebuild/restart).
 
+## Bulletproofing — crash immunity + auto-recovery (2026-07-06)
+
+The server used to die (and stay dead) from any uncaught exception — the prime
+suspect being chokidar `error` events (EPERM/EBUSY on watched `.git/index`
+files across ~149 repos) which had NO handlers on any of the 4 watcher tiers.
+Now layered so a background fault can't kill it, and a real death self-heals:
+
+- **Crash guard** (`server/src/lib/crashGuard.ts`, installed first in
+  `index.ts main()`): `uncaughtException`/`unhandledRejection` are logged to
+  **`~/.deck/crash.log`** (rotates at 1MB → `.1`) and survived. Escalation: ≥25
+  uncaught exceptions in 60s → flush state + scrollback, `exit(1)` → supervisor
+  restarts clean.
+- **Supervisor** (`server/scripts/supervise.mjs`): `bun start` now runs THIS;
+  it spawns `tsx src/index.ts` and restarts on any non-zero exit with backoff
+  1s→2s→5s→10s→30s (streak resets after 60s uptime). Exit 0 (SIGINT/SIGTERM) =
+  intentional, no restart. Restarts logged to crash.log. Raw run:
+  `bun run --filter @deck/server start:unsupervised`. Verified live: force-
+  killed the server twice → back healthy on a new pid in <5s both times.
+- **Error handlers added** where an unhandled `error` event = process death:
+  all 4 chokidar tiers (`watcher.ts guard()`), pg `Client` post-connect drops
+  (`db/service.ts`), prisma-studio child spawn (`db/studio.ts`).
+- **Contained tickers**: `services.ts safeTick()` wraps rescan/external/
+  scrollback intervals; the 5s status ticker try/catches per session; pty
+  data/exit listener fan-out try/catches per listener.
+- **Durability**: (1) `saveAllScrollback()` flushes changed running-pty screens
+  to `~/.deck/scrollback/` every 30s (+ on graceful/fatal shutdown), so a hard
+  kill no longer loses terminal screens — restore tabs work after any death.
+  (2) `state.json` writes keep the previous good file as `state.json.bak`;
+  `loadState` falls back to it instead of silently resetting to defaults.
+  (3) `process.on("exit")` does a final sync `flushState()`.
+
+## PR Audit — AI pre-merge report in the Git tab (2026-07-07)
+
+The Git tab's left column has a **PR Audit** row (above the status list; shows
+a LOW/MEDIUM/HIGH risk badge from the cached report + an amber dot when the
+diff moved since). Clicking it fills the right pane with `components/git/
+AuditPanel.tsx`: headline + one-sentence verdict, risk level + why, computed
+stats (files/+/−), **findings** (bugs→risks→nits; file:line chips jump to that
+file's diff, or the Files tab when it's not in the change set), **impacts**
+grouped by area (db/api/ui/state/config/deps/infra/tests/docs/other),
+**features touched** (it reads the project's cliffnotes.md — 16KB cap — every
+run), and a **before-merge checklist** (client-side checkboxes). Bottom: an
+"ask about this change" box; the Q/A thread survives panel remounts via a
+module-level cache.
+
+- **Scope**: dirty tree → `git diff HEAD` + untracked file CONTENTS inlined as
+  pseudo-diffs (≤30 files, ≤300 lines each, binary-sniffed); clean tree →
+  `base...HEAD` vs upstream (fallback origin/main → origin/master → main →
+  master) + unpushed commit subjects. Caps: 400 lines/file, 150KB total.
+  Stats come from `--numstat`, not the model.
+- **Server** `server/src/git/audit.ts`: `gatherAuditContext`/`buildAuditRequest`
+  (pure, exported for the smoke test) → `aiComplete` feature **`prAudit`**
+  (sonnet default, $1.50/day, json, 240s timeout) → `sanitizeReport` (enum
+  coercion, string caps, bugs-first sort) → report cached in memory **and**
+  `~/.deck/audits/<safe id>.json` (survives restarts). `diffSig` = sha1 of the
+  audited diff; GET recomputes the current sig to flag staleness.
+- **Routes** (`routes/git.ts`): GET `/projects/:id/git/audit` → `GitAuditState
+  {report, stale}`; POST same → run fresh (400 = nothing to audit, 503 = AI
+  off/over budget/already running); POST `…/git/audit/ask` `{question}` →
+  `{answer}` (≤80-word plain-text answers; same feature id, so the per-feature
+  in-flight guard serializes audit vs ask).
+- **Client**: GitTab and AuditPanel share the `["git", projectId, "audit"]`
+  query key, so the badge is live before the panel ever opens; `git.updated`
+  invalidations refresh the stale flag. Types in shared: `GitAuditReport`,
+  `GitAuditState`, `AuditFinding/Impact/RiskLevel/Severity/ImpactArea`.
+- **Smoke test**: `server/scripts/audit-smoke.ts` (tsx; makes ONE real sonnet
+  call, never touches state.json/ledger — safe next to a running server).
+
+## Transcript feed → Claude Code terminal look (2026-07-07)
+
+The read-only agent feed (`components/feed/Feed.tsx` + `FeedEvent.tsx`) used to
+be proportional Inter text with lucide icons, per-line timestamps, checkmarks,
+rounded boxes and bordered inline-code chips — it read as "noise" and looked
+nothing like the CC terminal it mirrors. Rewritten to render like Claude Code's
+own transcript, so the read-only feed and the live xterm sit side-by-side nearly
+identical (verified in-browser, split view).
+
+- **One monospace column.** `Feed.tsx` scroll container is now `font-mono
+  text-[12.5px]`; the virtualized inner div is capped `maxWidth: 108ch` (left-
+  aligned readable measure, not full ultrawide width — width caps the
+  `width:100%` absolute rows via the positioned parent).
+- **`FeedEvent.tsx` fully rewritten**, all icons/timestamps dropped. A shared
+  `Row` = 1ch marker gutter + hanging content (`gap-[1ch]`, CC's `● text` /
+  `  ⎿ text` rhythm). Per kind:
+  - **assistant** — `●` in accent + markdown via `.deck-term-md`.
+  - **tool** — `●` (status-colored: ok=t2, pending=warn+pulse, error=err) +
+    `Verb(arg)` (bold verb, parenthesized arg; `formatTool()` splits
+    `event.title`/`detail`). Result hangs off `⎿`: non-edit shows first line +
+    "… +N lines", click expands to full `<pre>`; **edit** shows
+    `⎿ +A −D · ctrl+o to expand`, expand reveals the `DiffLines` mini-diff.
+  - **user** — accent left-bar + faint accent bg, mono (kept distinct/scannable
+    for the [[ambient-visibility-over-clicks]] recall cue).
+  - **thinking** — `✻ Thinking… · Nk` dimmed italic, click expands.
+  - **subagent** — `● Task(desc)` + `⎿ N events`, expand nests `FeedEvent`s.
+  - **meta** — dim `·` line.
+- **`.deck-term-md`** (new, in `theme/tokens.css`) — feed-scoped markdown:
+  monospace, small flat headers, inline code as bare `--accent-text` (no chip
+  border/bg), tight margins. `NotesTab`/`DigestView` keep the proportional
+  `.deck-md` (unchanged).
+- Client-only, no server/state/shared-type change. Dev-only until a prod
+  rebuild (`bun run build` + bounce) — the standalone `deck.cmd` app serves the
+  old bundle on 12345 until then.
+
 ## Task board v2 — personal ADHD-first kanban (2026-07-06)
 
 Full rewrite of M17. The board is now a **pure personal kanban**: it can NEVER
@@ -241,8 +360,33 @@ restart (state migration) — old cards are migrated in `state.ts migrateTask`
   header amber with a "one thing at a time" nag, never blocks) / `done` (wins;
   cards fade at 7d client-side, auto-pruned at 30d lazily in `listTasks`).
 - **Card** (`TaskCard`): title, body (notes), `projectId: string|null`
-  (capture first, assign later), `prompt: string|null` (see below), order
-  (fractional — card-level drop inserts before target at midpoint order).
+  (capture first, assign later), `prompt: string|null` (see below),
+  `images: TaskImage[]` (see below), order (fractional — card-level drop
+  inserts before target at midpoint order).
+- **Images on cards** (2026-07-07). Bytes at `~/.deck/task-images/
+  <taskId>-<imgId>.<ext>` (png/jpg/gif/webp, 15MB cap, 12/card), index =
+  `TaskImage` on the card. Upload = JSON base64 data-URL `POST
+  /tasks/:id/images` (route-level `bodyLimit` 24MB — fastify default is 1MB);
+  serve `GET .../images/:imageId` (immutable cache — image ids never change
+  content); `DELETE` removes both. Files are cleaned on every card-death path
+  (delete / clear-done / 30d prune / 200-cap prune). Client
+  (`components/board/taskImages.tsx`): paste/drop/file-pick in composer +
+  card editor, thumb strip on collapsed cards (3 + "+N"), portaled Lightbox
+  (stopPropagation — portal events bubble through the REACT tree, so clicks
+  would otherwise re-open the card under it).
+- **Composer** (2026-07-07, replaced the bare CaptureBar): one bar — inline
+  `ProjectPicker` chip (**sticky between adds** — the fix for
+  "assign-the-project-after"), title input (Enter = quick add), chevron
+  expands to notes + pending-image tray + target column segmented
+  (Inbox/Next/Now — `createTask` now accepts `status`, never `done`) +
+  Ctrl+Enter/Add. Pasting a screenshot anywhere in the bar auto-expands and
+  attaches; images upload after create (`uploadPending`).
+- **ProjectPicker** (`components/board/ProjectPicker.tsx`): Radix Popover
+  replacing the old `<select>` — search + arrow-key nav, rows are the Rail
+  "Open projects" look (gradient avatar + initials + status dot, name,
+  branch/dirty/agents meta), sections: No project → Open projects
+  (uiStore.openProjects) → All projects (activity-sorted). Used in the
+  composer (compact chip) and card editor (`block`).
 - **AI prompt drafting** (the ONLY automation): ✨ on the expanded card →
   `POST /tasks/:id/generate-prompt` → `tasks/service.generateTaskPrompt` reads
   the project's `cliffnotes.md` (14KB cap) + title/body → `aiComplete` feature
@@ -250,9 +394,11 @@ restart (state migration) — old cards are migrated in `state.ts migrateTask`
   editable prompt textarea. Requires an assigned project (400 otherwise);
   503 = AI off/over budget.
 - **Server**: `tasks/service.ts` (list/create/update/delete/clearDone/
-  generateTaskPrompt; delete + prune broadcast **`tasks.removed`**),
-  `routes/tasks.ts` (`/tasks/clear-done` registered before `/tasks/:id`).
-  `tasks/autopilot.ts` DELETED; `state.autopilot` removed from DeckState.
+  generateTaskPrompt + addTaskImage/removeTaskImage/getTaskImage; delete +
+  prune broadcast **`tasks.removed`**), `routes/tasks.ts` (`/tasks/clear-done`
+  registered before `/tasks/:id`). `tasks/autopilot.ts` DELETED;
+  `state.autopilot` removed from DeckState. `state.ts migrateTask` backfills
+  `images: []` on old cards.
 - **Client**: `views/BoardView.tsx` rewritten — takes an optional `projectId`
   prop: without it it's the top-level board (Rail footer "Tasks" / palette),
   with it it's the **per-project "Tasks" view tab** (`ProjectViewKind +=
@@ -292,6 +438,36 @@ watches every root; `locator.isRootDirName` matches any root (unclaimed
 non-git-subdir transcripts from any root land in `__root__`). `/api/config` +
 `DeckClientConfig` expose `roots`; Settings shows the list. Needs server
 restart after editing deck.config.json (config is read once at boot).
+
+## Expanded mission-control sidebar (2026-07-07)
+
+The rail now has **two persisted modes** (`uiStore.sidebarMode`, default
+`expanded`; toggle = header PanelLeft button or **Ctrl+Shift+B**; Ctrl+B still
+fully hides): `compact` = the slim rail below, `expanded` = a wide ambient
+panel (own width `uiStore.sidebarWideWidth`, default 30% of window, drag clamp
+360–45%, separate from compact's 200–420). Expanded body =
+`components/rail/ExpandedProjects.tsx`: each OPEN project is a rich card —
+avatar/status dot, branch + ahead/behind + dirty, then every non-stale session
+as a row (attention w/ "waiting Nm" + promptTail box → working → finished
+(owned·idle·unread, review-claimed excluded) → exited(≠0) → idle capped 3),
+each with status dot, kind icon, `displayTitle`, **`Session.firstPrompt`** (the
+original ask, accent-left-border quote, line-clamp-2), and aiMeta.summary ??
+lastActivityLine. Footer strip chips: N reviews → git tab, live ports →
+browser, now★/next⋯ tasks → tasks tab. Click row = openSession (+markRead);
+card order = openProjects order (stable); 20s tick ages the times. Derives
+entirely from existing client stores (sessions/reviews/tasks/libraryStore —
+all bootstrapped app-wide in App.tsx).
+
+**`Session.firstPrompt`** (shared type, optional): first REAL user message from
+the transcript — strips `<system-reminder>` blocks, skips `Caveat:`/
+`<command-`/`<local-command`/`<bash-input` meta lines, one line, 280-char cap.
+Computed in `parser.ts firstRealPrompt()` (`ParsedTranscript.firstPrompt`),
+surfaced via `registry.describe()`/`toSession` and `sessions/manager.toSession`
+(owned claude incl. exited). Free — no AI call. **Needs a server restart** to
+appear; client degrades gracefully (line simply omitted). Verified against 8
+real transcripts via a scratch tsx harness; UI verified live in-browser
+(expanded default, toggle round-trip, Ctrl+Shift+B, drag-resize + persistence,
+attention/working/idle rows, reviews chip).
 
 ## Wide sidebar (2026-07-05)
 
@@ -502,6 +678,7 @@ fully reconciled here.
 bun install                      # once
 bun run dev                      # server (12345) + Vite (12346, proxies /api,/ws) — open http://127.0.0.1:12346
 bun run build && bun start       # prod: build web, serve everything on http://127.0.0.1:12345
+                                 # `bun start` runs the SUPERVISOR (auto-restart on crash) — see Bulletproofing
 bun run typecheck                # tsc --noEmit for both packages
 deck.cmd                         # launch Deck as a STANDALONE APP WINDOW (see below)
 ```

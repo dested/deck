@@ -156,7 +156,15 @@ class PtyManager {
       } catch {
         /* headless write must never crash the pipe */
       }
-      for (const l of rec.dataListeners) l(data);
+      // A throwing listener (WS bridge, status publisher) must not break the
+      // data pipe for the other listeners.
+      for (const l of rec.dataListeners) {
+        try {
+          l(data);
+        } catch {
+          /* listener's problem, not the pty's */
+        }
+      }
     });
 
     proc.onExit(({ exitCode }) => {
@@ -164,7 +172,13 @@ class PtyManager {
       rec.exitCode = exitCode;
       rec.exitedAt = Date.now();
       rec.pty = null;
-      for (const l of rec.exitListeners) l(exitCode);
+      for (const l of rec.exitListeners) {
+        try {
+          l(exitCode);
+        } catch {
+          /* listener's problem, not the pty's */
+        }
+      }
     });
 
     this.records.set(opts.id, rec);

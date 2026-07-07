@@ -22,6 +22,11 @@ async function withClient<T>(
     connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
     // Local dev DBs don't speak TLS; hosted URLs usually carry ?sslmode=.
   });
+  // A pg Client emits 'error' if the connection drops AFTER connect (server
+  // restart, network blip). Unhandled, that event is an uncaught exception
+  // that kills the whole Deck process. The in-flight query still rejects
+  // normally, so swallowing the event is safe.
+  client.on("error", () => {});
   await client.connect();
   try {
     return await fn(client);

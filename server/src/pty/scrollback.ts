@@ -33,6 +33,26 @@ export function saveScrollback(id: string): void {
   }
 }
 
+// Periodic flush: snapshot every running pty whose output moved since the last
+// save, so a hard crash (kill -9, OOM, power) still leaves a restorable screen
+// on disk — not just clean exits. Called from the services 30s timer and the
+// graceful/fatal shutdown paths.
+const lastSavedActivity = new Map<string, number>();
+
+export function saveAllScrollback(): void {
+  const live = new Set<string>();
+  for (const rec of ptyManager.all()) {
+    live.add(rec.id);
+    if (rec.status !== "running") continue;
+    if (lastSavedActivity.get(rec.id) === rec.lastActivityAt) continue;
+    saveScrollback(rec.id);
+    lastSavedActivity.set(rec.id, rec.lastActivityAt);
+  }
+  for (const id of [...lastSavedActivity.keys()]) {
+    if (!live.has(id)) lastSavedActivity.delete(id);
+  }
+}
+
 // Read a persisted scrollback, strip ANSI, and return the last `maxLines` lines
 // as plain text. null when nothing was captured for this id.
 export function readScrollback(id: string, maxLines = 120): string | null {

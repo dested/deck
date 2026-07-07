@@ -6,6 +6,8 @@ import type {
   Session,
   Group,
   GitStatus,
+  GitAuditReport,
+  GitAuditState,
   DiffResult,
   Commit,
   CommitShow,
@@ -138,6 +140,14 @@ export const api = {
     get<DiffResult>(
       `/api/projects/${enc(id)}/git/show-file?hash=${enc(hash)}&path=${enc(path)}`,
     ),
+  gitAuditState: (id: string) =>
+    get<GitAuditState>(`/api/projects/${enc(id)}/git/audit`),
+  gitAuditRun: (id: string) =>
+    post<GitAuditReport>(`/api/projects/${enc(id)}/git/audit`),
+  gitAuditAsk: (id: string, question: string) =>
+    post<{ answer: string }>(`/api/projects/${enc(id)}/git/audit/ask`, {
+      question,
+    }),
 
   sessions: () => get<Session[]>("/api/sessions"),
   projectAgentSessions: (id: string) =>
@@ -277,8 +287,12 @@ export const api = {
 
   // ----- M17v2: personal task board -----
   tasks: () => get<TaskCard[]>("/api/tasks"),
-  createTask: (body: { title: string; body?: string; projectId?: string | null }) =>
-    post<TaskCard>("/api/tasks", body),
+  createTask: (body: {
+    title: string;
+    body?: string;
+    projectId?: string | null;
+    status?: "inbox" | "next" | "now";
+  }) => post<TaskCard>("/api/tasks", body),
   updateTask: (
     id: string,
     body: Partial<
@@ -289,6 +303,14 @@ export const api = {
   clearDoneTasks: () => post<{ cleared: number }>("/api/tasks/clear-done"),
   generateTaskPrompt: (id: string) =>
     post<TaskCard>(`/api/tasks/${enc(id)}/generate-prompt`),
+  addTaskImage: (
+    id: string,
+    body: { data: string; name?: string; w?: number; h?: number },
+  ) => post<TaskCard>(`/api/tasks/${enc(id)}/images`, body),
+  deleteTaskImage: (id: string, imageId: string) =>
+    del<TaskCard>(`/api/tasks/${enc(id)}/images/${enc(imageId)}`),
+  taskImageUrl: (taskId: string, imageId: string) =>
+    `/api/tasks/${enc(taskId)}/images/${enc(imageId)}`,
 
   // ----- M18: runbook + preview -----
   runbook: (id: string) => get<RunbookInfo>(`/api/projects/${enc(id)}/runbook`),

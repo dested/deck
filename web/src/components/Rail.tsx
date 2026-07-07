@@ -14,6 +14,8 @@ import {
   SquareTerminal,
   Activity,
   GitBranch,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useProjectsStore } from "../stores/projectsStore";
 import {
@@ -27,6 +29,7 @@ import { api } from "../lib/api";
 import { cn } from "../lib/cn";
 import { projectGradient, projectInitials } from "../lib/identity";
 import { Tooltip } from "./ui/Tooltip";
+import { ExpandedProjects } from "./rail/ExpandedProjects";
 import {
   menuContent,
   menuContentStyle,
@@ -36,15 +39,19 @@ import {
 
 // The rail: a sidebar of OPEN projects (full names, branch + agent status).
 // The full project list lives in the Library (Home); the rail is only what
-// you're working on now. Width is persisted (uiStore.sidebarWidth) and
-// drag-resizable via the right-edge handle.
+// you're working on now. Two persisted modes (Ctrl+Shift+B): "expanded" — the
+// wide mission-control panel with rich per-project cards (ExpandedProjects) —
+// and "compact", the slim rail. Each mode keeps its own drag-resizable width.
 export function Rail() {
   const byId = useProjectsStore((s) => s.byId);
   const sessions = useSessionsStore((s) => s.byId);
   const openProjects = useUIStore((s) => s.openProjects);
   const activeProjectId = useUIStore((s) => s.activeProjectId);
   const topView = useUIStore((s) => s.topView);
-  const width = useUIStore((s) => s.sidebarWidth);
+  const compactWidth = useUIStore((s) => s.sidebarWidth);
+  const wideWidth = useUIStore((s) => s.sidebarWideWidth);
+  const mode = useUIStore((s) => s.sidebarMode);
+  const toggleSidebarMode = useUIStore((s) => s.toggleSidebarMode);
   const goHome = useUIStore((s) => s.goHome);
   const openProject = useUIStore((s) => s.openProject);
   const closeRailProject = useUIStore((s) => s.closeRailProject);
@@ -66,6 +73,12 @@ export function Rail() {
 
   const homeActive = activeProjectId === null && topView === null;
   const rootActive = activeProjectId === "__root__" && topView === null;
+
+  const expanded = mode === "expanded";
+  // 0 = never dragged → default to 30% of the window (the ultrawide sweet spot).
+  const width = expanded
+    ? wideWidth || Math.max(360, Math.round(window.innerWidth * 0.3))
+    : compactWidth;
 
   return (
     <aside
@@ -104,34 +117,56 @@ export function Rail() {
       </div>
 
       <div className="mt-2 flex items-center px-4 pb-1 pt-2">
-        <span className="section-label">Open projects</span>
+        <span className="section-label flex-1">Open projects</span>
+        <Tooltip
+          label={expanded ? "Collapse to compact rail (Ctrl+Shift+B)" : "Expand to full detail (Ctrl+Shift+B)"}
+          side="right"
+        >
+          <button
+            onClick={toggleSidebarMode}
+            className="flex h-6 w-6 items-center justify-center rounded-[6px] text-t3 transition-colors hover:bg-raised hover:text-t1"
+            aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            {expanded ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+          </button>
+        </Tooltip>
       </div>
 
       {/* Open projects */}
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1">
-        {railIds.length === 0 && (
-          <div className="px-2 py-3 text-[12px] leading-5 text-t3">
-            Nothing open yet — pick a project from the Library.
-          </div>
-        )}
-        {railIds.map((id) => (
-          <ProjectRow
-            key={id}
-            project={byId[id]!}
-            stats={stats.get(id)}
-            active={id === activeProjectId && topView === null}
-            onOpen={() => openProject(id)}
-            onClose={() => closeRailProject(id)}
-            onCloseOthers={() => {
-              for (const other of railIds) if (other !== id) closeRailProject(other);
-              openProject(id);
-            }}
-          />
-        ))}
-      </div>
+      {expanded ? (
+        <ExpandedProjects railIds={railIds} />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1">
+          {railIds.length === 0 && (
+            <div className="px-2 py-3 text-[12px] leading-5 text-t3">
+              Nothing open yet — pick a project from the Library.
+            </div>
+          )}
+          {railIds.map((id) => (
+            <ProjectRow
+              key={id}
+              project={byId[id]!}
+              stats={stats.get(id)}
+              active={id === activeProjectId && topView === null}
+              onOpen={() => openProject(id)}
+              onClose={() => closeRailProject(id)}
+              onCloseOthers={() => {
+                for (const other of railIds) if (other !== id) closeRailProject(other);
+                openProject(id);
+              }}
+            />
+          ))}
+        </div>
+      )}
 
-      {/* Footer: top-level views as a compact icon row */}
-      <div className="mt-1 flex shrink-0 items-center justify-between border-t border-hair px-3 pt-2">
+      {/* Footer: top-level views as a compact icon row (clustered when wide —
+          justify-between across a 1000px panel scatters the icons) */}
+      <div
+        className={cn(
+          "mt-1 flex shrink-0 items-center border-t border-hair px-3 pt-2",
+          expanded ? "gap-1" : "justify-between",
+        )}
+      >
         <FooterView view="system" label="System (ports + processes)" icon={<Activity size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="board" label="Tasks" icon={<Kanban size={16} />} topView={topView} onClick={setTopView} />
         <FooterView view="digest" label="Daily digest" icon={<Newspaper size={16} />} topView={topView} onClick={setTopView} />
@@ -148,7 +183,7 @@ export function Rail() {
         </Tooltip>
       </div>
 
-      <ResizeHandle />
+      <ResizeHandle expanded={expanded} />
     </aside>
   );
 }
@@ -362,14 +397,17 @@ function FooterView({
 }
 
 // Right-edge drag handle: the rail starts at x=0, so pointer clientX is the
-// desired width (setSidebarWidth clamps to 200–420).
-function ResizeHandle() {
+// desired width. Each mode keeps its own width (compact clamps 200–420,
+// expanded 360–45% of the window).
+function ResizeHandle({ expanded }: { expanded: boolean }) {
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
+  const setSidebarWideWidth = useUIStore((s) => s.setSidebarWideWidth);
+  const setWidth = expanded ? setSidebarWideWidth : setSidebarWidth;
   return (
     <div
       onPointerDown={(e) => {
         e.preventDefault();
-        const move = (ev: PointerEvent) => setSidebarWidth(ev.clientX);
+        const move = (ev: PointerEvent) => setWidth(ev.clientX);
         const up = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);

@@ -305,6 +305,59 @@ body {
   margin: 12px 0;
 }
 
+/* ---- Terminal-flavored transcript markdown (feed only) ----
+   Renders the assistant's prose in the same monospace column as the tool
+   lines, the way Claude Code's own terminal does. Quiets the heavy inline-code
+   chips and shrinks headers so a long final message reads as terminal output,
+   not a web article. Scoped to .deck-term-md so NotesTab/Digest keep the
+   readable proportional .deck-md. */
+.deck-term-md {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.deck-term-md p {
+  margin: 0 0 6px;
+}
+.deck-term-md h1,
+.deck-term-md h2,
+.deck-term-md h3,
+.deck-term-md h4 {
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.deck-term-md ul,
+.deck-term-md ol {
+  margin: 0 0 6px;
+  padding-left: 2ch;
+}
+.deck-term-md li {
+  margin: 1px 0;
+}
+.deck-term-md code {
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent-text);
+}
+.deck-term-md pre {
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 0 0 6px;
+}
+.deck-term-md pre code {
+  color: var(--text-1);
+}
+.deck-term-md blockquote {
+  margin: 0 0 6px;
+}
+.deck-term-md hr {
+  margin: 8px 0;
+}
+
 /* ---- Diff lines (shared by git panel §6 + edit mini-diffs §7.2) ---- */
 .diff-row {
   display: flex;

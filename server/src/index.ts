@@ -25,8 +25,27 @@ import { registerStackRoutes } from "./routes/stack.js";
 import { registerTermRoutes } from "./ws/term.js";
 import { startServices, stopServices } from "./services.js";
 import { ptyManager } from "./pty/manager.js";
+import { saveAllScrollback } from "./pty/scrollback.js";
+import { installCrashGuard, logCrash } from "./lib/crashGuard.js";
+
+// Last-ditch durability before ANY exit path (fatal escalation included):
+// persist state + every live terminal's screen so a restart can restore tabs.
+function persistEverything() {
+  try {
+    saveAllScrollback();
+  } catch {
+    /* best-effort */
+  }
+  flushState();
+}
 
 async function main() {
+  // First thing, before anything can throw: uncaught exceptions / unhandled
+  // rejections are logged to ~/.deck/crash.log and survived, never fatal —
+  // except a tight uncaught-exception loop, which flushes and exits(1) so the
+  // supervisor (server/scripts/supervise.mjs) restarts us clean.
+  installCrashGuard(persistEverything);
+
   loadState();
 
   const app = Fastify({
@@ -111,7 +130,7 @@ async function main() {
 
   const closeGracefully = async (signal: string) => {
     console.log(`\n[deck] ${signal} — shutting down`);
-    flushState();
+    persistEverything(); // scrollback BEFORE disposeAll kills the rings
     stopServices();
     ptyManager.disposeAll();
     try {
@@ -122,6 +141,8 @@ async function main() {
   };
   process.on("SIGINT", () => void closeGracefully("SIGINT"));
   process.on("SIGTERM", () => void closeGracefully("SIGTERM"));
+  // Whatever still manages to end the process, flush state synchronously.
+  process.on("exit", () => flushState());
 
   await app.listen({ host: "127.0.0.1", port: config.port });
   const mode = config.isDev ? "dev (vite proxy on 12346)" : "prod";
@@ -131,6 +152,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[deck] fatal boot error:", err);
+  logCrash("fatal boot error", err);
   process.exit(1);
 });

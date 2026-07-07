@@ -89,6 +89,12 @@ export const studioManager = {
       error: null,
       stderrTail: [],
     };
+    // 'error' (spawn failure) is an uncaught exception if unhandled — fold it
+    // into the entry's error state instead of killing the server.
+    child.on("error", (err) => {
+      entry.ready = false;
+      entry.error = `prisma studio spawn failed: ${err.message}`;
+    });
     child.stderr?.on("data", (buf: Buffer) => {
       entry.stderrTail.push(buf.toString("utf8"));
       if (entry.stderrTail.length > 20) entry.stderrTail.shift();

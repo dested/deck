@@ -56,6 +56,7 @@ export interface ParsedTranscript {
   lastTs: number;
   count: number;
   model: string | null; // last assistant message model, humanized-ish
+  firstPrompt: string | null; // the original ask (first real user message)
 }
 
 const MAX_DIFF_LINES = 240;
@@ -150,7 +151,33 @@ export function buildEvents(parsed: RawLine[]): ParsedTranscript {
     handleMainLine(line, ts, events, toolIndex);
   }
 
-  return { events, title, cwd, lastTs, count: events.length, model };
+  return {
+    events,
+    title,
+    cwd,
+    lastTs,
+    count: events.length,
+    model,
+    firstPrompt: firstRealPrompt(events),
+  };
+}
+
+// The user's original ask, for "what is this agent even doing" surfaces.
+// Skips slash-command/meta noise and strips injected <system-reminder> blocks;
+// collapsed to one line, capped.
+const META_PROMPT_RE = /^(caveat:|<command-|<local-command|<bash-input)/i;
+
+function firstRealPrompt(events: TranscriptEvent[]): string | null {
+  for (const e of events) {
+    if (e.kind !== "user") continue;
+    const cleaned = e.text
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ")
+      .trim();
+    if (!cleaned || META_PROMPT_RE.test(cleaned)) continue;
+    const line = cleaned.replace(/\s+/g, " ");
+    return line.length > 280 ? line.slice(0, 280) + "…" : line;
+  }
+  return null;
 }
 
 function handleMainLine(

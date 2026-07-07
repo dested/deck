@@ -211,6 +211,9 @@ export interface Session {
   promptTail?: string[] | null;
   // M12: AI-generated tab title + one-line live summary, refreshed on change.
   aiMeta?: { title: string; summary: string; at: number } | null;
+  // The original ask: first real user message in the transcript (meta/command
+  // noise skipped), single line, capped. Free — parsed, no AI call.
+  firstPrompt?: string | null;
 }
 
 export interface Group {
@@ -421,7 +424,8 @@ export type AiFeatureId =
   | "digest"
   | "runbook" // M18: generate deck.run.json from the repo
   | "dbQuery" // M20: natural language -> read-only SQL
-  | "taskPrompt"; // M17v2: draft a Claude Code prompt for a task card
+  | "taskPrompt" // M17v2: draft a Claude Code prompt for a task card
+  | "prAudit"; // PR audit: pre-merge risk/impact/bug report on the change
 
 export type AiBackend = "claude-cli" | "api";
 
@@ -480,6 +484,62 @@ export interface AiResult {
 }
 
 // ---------------------------------------------------------------------------
+// PR audit — AI pre-merge report on the current change (Git tab)
+// ---------------------------------------------------------------------------
+
+export type AuditRiskLevel = "low" | "medium" | "high";
+export type AuditSeverity = "bug" | "risk" | "nit";
+export type AuditImpactArea =
+  | "db"
+  | "api"
+  | "ui"
+  | "state"
+  | "config"
+  | "deps"
+  | "infra"
+  | "tests"
+  | "docs"
+  | "other";
+
+export interface AuditFinding {
+  severity: AuditSeverity; // bug = likely broken; risk = could break; nit = minor
+  title: string; // one terse line
+  detail: string; // 1–2 sentences max
+  file: string | null; // repo-relative path when the finding is localized
+  line: number | null; // new-side line number when citable
+}
+
+export interface AuditImpact {
+  area: AuditImpactArea;
+  summary: string; // one line, e.g. "state.json gains `tasks[].images` — needs restart"
+  files: string[]; // the touched files behind this impact
+}
+
+export interface GitAuditReport {
+  generatedAt: number;
+  scope: "working" | "branch"; // dirty tree, or (clean) unpushed commits
+  branch: string;
+  headline: string; // ≤12 words: what this change IS
+  verdict: string; // one sentence: overall take
+  risk: { level: AuditRiskLevel; why: string };
+  stats: { files: number; additions: number; deletions: number };
+  impacts: AuditImpact[]; // total blast radius, grouped by area
+  findings: AuditFinding[]; // bugs first, then risks, then nits
+  features: string[]; // user-facing features/systems touched (per cliffnotes)
+  checklist: string[]; // concrete before-merge actions
+  model: string;
+  costUSD: number;
+  durationMs: number;
+  diffSig: string; // sha1 of the audited diff — staleness detection
+}
+
+// GET /projects/:id/git/audit — cached report + whether the diff moved since.
+export interface GitAuditState {
+  report: GitAuditReport | null;
+  stale: boolean; // report exists but the diff has changed since it ran
+}
+
+// ---------------------------------------------------------------------------
 // M9 — transcript search
 // ---------------------------------------------------------------------------
 
@@ -530,12 +590,25 @@ export interface Recipe {
 // (fades after 7d client-side, auto-pruned after 30d server-side).
 export type TaskStatus = "inbox" | "next" | "now" | "done";
 
+// An image attached to a card (pasted screenshot, dropped file). The bytes
+// live on disk (~/.deck/task-images/<taskId>-<id>.<ext>); this is the index
+// entry. Served at GET /tasks/:taskId/images/:id.
+export interface TaskImage {
+  id: string;
+  ext: "png" | "jpg" | "gif" | "webp";
+  name: string; // original filename, or "pasted image"
+  addedAt: number;
+  w?: number; // client-measured dimensions (best effort, for layout hints)
+  h?: number;
+}
+
 export interface TaskCard {
   id: string;
   title: string;
   body: string; // free-form description / notes
   projectId: string | null; // capture first, assign later
   prompt: string | null; // AI-drafted Claude Code prompt (copy-paste, manual)
+  images: TaskImage[]; // attached screenshots/mockups
   createdAt: number;
   doneAt: number | null;
   order: number;

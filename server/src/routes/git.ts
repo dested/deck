@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { projectRegistry, ROOT_PROJECT_ID } from "../projects/registry.js";
 import { eventHub, topics } from "../ws/events.js";
 import * as git from "../git/service.js";
+import * as audit from "../git/audit.js";
 import { aiComplete } from "../ai/client.js";
 
 // M13: per-style system prompts for AI commit-message generation.
@@ -212,4 +213,66 @@ export async function registerGitRoutes(app: FastifyInstance) {
     if (!res) return reply.code(502).send({ error: "generation failed or off" });
     return { message: res.text.trim() };
   });
+
+  // PR audit: cached report + staleness (cheap-ish — recomputes the diff sig).
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/git/audit",
+    async (req, reply) => {
+      const cwd = repo(req.params.id);
+      if (!cwd) return reply.code(404).send({ error: "project not found" });
+      try {
+        return await audit.getAuditState(req.params.id, cwd);
+      } catch (err) {
+        return reply.code(500).send({ error: String(err) });
+      }
+    },
+  );
+
+  // PR audit: run a fresh one (always regenerates — the client gates on stale).
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/git/audit",
+    async (req, reply) => {
+      const cwd = repo(req.params.id);
+      if (!cwd) return reply.code(404).send({ error: "project not found" });
+      try {
+        const report = await audit.runAudit(req.params.id, cwd);
+        if (!report) {
+          return reply
+            .code(503)
+            .send({ error: "AI off, over budget, or an audit is already running" });
+        }
+        return report;
+      } catch (err) {
+        return reply
+          .code(400)
+          .send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  // PR audit: ask a question about the pending change.
+  app.post<{ Params: { id: string }; Body: { question: string } }>(
+    "/projects/:id/git/audit/ask",
+    async (req, reply) => {
+      const cwd = repo(req.params.id);
+      if (!cwd) return reply.code(404).send({ error: "project not found" });
+      try {
+        const answer = await audit.askAudit(
+          req.params.id,
+          cwd,
+          req.body.question ?? "",
+        );
+        if (!answer) {
+          return reply
+            .code(503)
+            .send({ error: "AI off, over budget, or an audit call is in flight" });
+        }
+        return { answer };
+      } catch (err) {
+        return reply
+          .code(400)
+          .send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
 }

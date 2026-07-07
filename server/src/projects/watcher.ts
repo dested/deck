@@ -8,6 +8,16 @@ import {
   matchDirToProject,
 } from "../transcripts/locator.js";
 import { onTranscriptFileChanged } from "../transcripts/tailer.js";
+import { logCrash } from "../lib/crashGuard.js";
+
+// EVERY chokidar watcher needs an error handler: on Windows, EPERM/EBUSY on a
+// watched path (git locking .git/index, a repo being deleted, AV scans) emits
+// an 'error' event, and an unhandled 'error' on an EventEmitter is an uncaught
+// exception — it killed the whole server. Log and keep watching.
+function guard(w: FSWatcher, name: string): FSWatcher {
+  w.on("error", (err) => logCrash(`watcher:${name}`, err));
+  return w;
+}
 
 // ---------------------------------------------------------------------------
 // Tier 1 — roots: add/remove of project folders under every configured root
@@ -16,11 +26,14 @@ import { onTranscriptFileChanged } from "../transcripts/tailer.js";
 let rootWatcher: FSWatcher | null = null;
 
 function startRootTier() {
-  rootWatcher = chokidar.watch(config.roots, {
-    depth: 0,
-    ignoreInitial: true,
-    persistent: true,
-  });
+  rootWatcher = guard(
+    chokidar.watch(config.roots, {
+      depth: 0,
+      ignoreInitial: true,
+      persistent: true,
+    }),
+    "roots",
+  );
   const rescan = debounce(() => {
     projectRegistry.rescan();
     syncGitHeartbeat();
@@ -36,15 +49,18 @@ function startRootTier() {
 let transcriptWatcher: FSWatcher | null = null;
 
 function startTranscriptTier() {
-  transcriptWatcher = chokidar.watch(config.claudeProjectsDir, {
-    depth: 1,
-    ignoreInitial: true,
-    persistent: true,
-    // Windows + heavy concurrent writes: polling is more reliable here.
-    usePolling: process.platform === "win32",
-    interval: 1000,
-    binaryInterval: 1500,
-  });
+  transcriptWatcher = guard(
+    chokidar.watch(config.claudeProjectsDir, {
+      depth: 1,
+      ignoreInitial: true,
+      persistent: true,
+      // Windows + heavy concurrent writes: polling is more reliable here.
+      usePolling: process.platform === "win32",
+      interval: 1000,
+      binaryInterval: 1500,
+    }),
+    "transcripts",
+  );
   const handle = (file: string) => {
     if (!file.endsWith(".jsonl")) return;
     const dirName = path.basename(path.dirname(file));
@@ -78,11 +94,14 @@ function gitFilesFor(projectPath: string): string[] {
 }
 
 function startGitHeartbeatTier() {
-  gitHeartbeat = chokidar.watch([], {
-    ignoreInitial: true,
-    persistent: true,
-    depth: 0,
-  });
+  gitHeartbeat = guard(
+    chokidar.watch([], {
+      ignoreInitial: true,
+      persistent: true,
+      depth: 0,
+    }),
+    "git-heartbeat",
+  );
   const onChange = debounce((file: string) => {
     // <repo>\.git\index -> <repo>
     const repo = path.win32.dirname(path.win32.dirname(file));
@@ -154,19 +173,22 @@ export function openRepoWatch(projectId: string) {
   if (!projectPath) return;
 
   const gitDir = path.win32.join(projectPath, ".git");
-  const watcher = chokidar.watch(
-    [
-      path.win32.join(gitDir, "index"),
-      path.win32.join(gitDir, "HEAD"),
-      path.win32.join(gitDir, "refs"),
-      projectPath,
-    ],
-    {
-      ignored: IGNORE,
-      ignoreInitial: true,
-      persistent: true,
-      depth: 6,
-    },
+  const watcher = guard(
+    chokidar.watch(
+      [
+        path.win32.join(gitDir, "index"),
+        path.win32.join(gitDir, "HEAD"),
+        path.win32.join(gitDir, "refs"),
+        projectPath,
+      ],
+      {
+        ignored: IGNORE,
+        ignoreInitial: true,
+        persistent: true,
+        depth: 6,
+      },
+    ),
+    `repo:${projectId}`,
   );
   const emit = debounce(() => {
     eventHub.publish([topics.git(projectId)], {

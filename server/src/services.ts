@@ -9,6 +9,7 @@ import {
 import { portWatcher } from "./projects/ports.js";
 import { screenshotService } from "./projects/screenshots.js";
 import { ptyManager } from "./pty/manager.js";
+import { saveAllScrollback } from "./pty/scrollback.js";
 import { sessionManager } from "./sessions/manager.js";
 import { transcriptRegistry } from "./transcripts/registry.js";
 import { primeCostReport } from "./cost/service.js";
@@ -24,6 +25,19 @@ import { studioManager } from "./db/studio.js";
 
 let rescanTimer: NodeJS.Timeout | null = null;
 let externalTimer: NodeJS.Timeout | null = null;
+let scrollbackTimer: NodeJS.Timeout | null = null;
+
+// A throw inside a timer tick used to be an uncaught exception (fatal before
+// the crash guard; noisy after). Contain it so the interval keeps running.
+function safeTick(name: string, fn: () => void): () => void {
+  return () => {
+    try {
+      fn();
+    } catch (err) {
+      console.warn(`[services] ${name} tick failed:`, err);
+    }
+  };
+}
 
 export async function startServices() {
   // M7: AI scratch dir + usage ledger warm-up.
@@ -90,14 +104,27 @@ export async function startServices() {
     }
   });
 
-  rescanTimer = setInterval(() => {
-    projectRegistry.rescan();
-    syncGitHeartbeat();
-    transcriptRegistry.refreshIndex();
-  }, 60_000);
+  rescanTimer = setInterval(
+    safeTick("rescan", () => {
+      projectRegistry.rescan();
+      syncGitHeartbeat();
+      transcriptRegistry.refreshIndex();
+    }),
+    60_000,
+  );
 
   // External session status transitions (working->attention->idle->stale).
-  externalTimer = setInterval(() => transcriptRegistry.tickExternal(), 10_000);
+  externalTimer = setInterval(
+    safeTick("externals", () => transcriptRegistry.tickExternal()),
+    10_000,
+  );
+
+  // Crash durability: persist changed terminal screens every 30s so even a
+  // hard kill leaves restorable scrollback on disk (clean exits also flush).
+  scrollbackTimer = setInterval(
+    safeTick("scrollback", () => saveAllScrollback()),
+    30_000,
+  );
 
   // Warm the cost report so the dashboard opens instantly (ccusage is slow on
   // its first bun-x resolve). Fire-and-forget; failures degrade gracefully.
@@ -118,6 +145,7 @@ export async function startServices() {
 export function stopServices() {
   if (rescanTimer) clearInterval(rescanTimer);
   if (externalTimer) clearInterval(externalTimer);
+  if (scrollbackTimer) clearInterval(scrollbackTimer);
   stopLiveMetaTicker();
   stopDigestScheduler();
   studioManager.disposeAll();

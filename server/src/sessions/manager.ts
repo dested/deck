@@ -348,11 +348,14 @@ class SessionManager {
     let lastActivityLine: string | null = null;
     let title: string | null = null;
     let stats: AgentStats | null = null;
+    let firstPrompt: string | null = null;
 
     if (rec.status === "exited") {
       status = "exited";
       if (rec.kind === "claude" && rec.transcriptSessionId) {
-        stats = transcriptRegistry.describe(rec.transcriptSessionId)?.stats ?? null;
+        const d = transcriptRegistry.describe(rec.transcriptSessionId);
+        stats = d?.stats ?? null;
+        firstPrompt = d?.firstPrompt ?? null;
       }
     } else if (rec.kind === "claude" && rec.transcriptSessionId) {
       // Owned claude status/attention comes from its transcript (§7.4).
@@ -362,6 +365,7 @@ class SessionManager {
         lastActivityLine = d.lastActivityLine;
         title = d.title;
         stats = d.stats;
+        firstPrompt = d.firstPrompt;
       } else {
         status = now - rec.lastActivityAt < WORKING_WINDOW_MS ? "working" : "idle";
       }
@@ -391,6 +395,7 @@ class SessionManager {
       promptTail:
         status === "attention" ? this.promptTails.get(rec.id) ?? null : null,
       aiMeta: this.aiMeta.get(rec.id) ?? null,
+      firstPrompt,
     };
   }
 
@@ -465,9 +470,15 @@ class SessionManager {
   startStatusTicker() {
     setInterval(() => {
       for (const id of this.owned.keys()) {
-        this.refreshPromptTail(id);
-        this.publishOwned(id);
-        this.checkReviewTransition(id);
+        // Per-session guard: one bad transcript/pty must not starve the rest
+        // of the tick (or, pre-crash-guard, kill the process).
+        try {
+          this.refreshPromptTail(id);
+          this.publishOwned(id);
+          this.checkReviewTransition(id);
+        } catch (err) {
+          console.warn(`[sessions] status tick failed for ${id}:`, err);
+        }
       }
     }, 5_000).unref?.();
   }

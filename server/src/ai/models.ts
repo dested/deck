@@ -23,7 +23,7 @@ export const AI_FEATURES: Record<
     label: "Tab titles + summaries",
     defaultModel: "claude-haiku-4-5",
     defaultEnabled: true,
-    dailyBudgetUSD: 0.5,
+    dailyBudgetUSD: 1.0,
   },
   liveSummary: {
     label: "Session summaries",
@@ -72,6 +72,12 @@ export const AI_FEATURES: Record<
     defaultModel: "claude-sonnet-5",
     defaultEnabled: true,
     dailyBudgetUSD: 0.5,
+  },
+  prAudit: {
+    label: "PR audits",
+    defaultModel: "claude-sonnet-5",
+    defaultEnabled: true,
+    dailyBudgetUSD: 1.5,
   },
 };
 

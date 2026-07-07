@@ -74,6 +74,12 @@ interface UIState {
 
   sidebarCollapsed: boolean;
   sidebarWidth: number;
+  // "expanded" = the wide mission-control sidebar (rich per-project cards, the
+  // ultrawide default); "compact" = the slim rail. Ctrl+B still fully hides.
+  sidebarMode: "expanded" | "compact";
+  // Width of the expanded sidebar; separate from the compact width so toggling
+  // modes round-trips both. 0 = unset → 30% of the window on first render.
+  sidebarWideWidth: number;
   search: string;
   terminalFontSize: number;
   notificationsEnabled: boolean;
@@ -99,7 +105,9 @@ interface UIState {
 
   setSearch: (s: string) => void;
   toggleSidebar: () => void;
+  toggleSidebarMode: () => void;
   setSidebarWidth: (w: number) => void;
+  setSidebarWideWidth: (w: number) => void;
   setTerminalFontSize: (n: number) => void;
   setNotificationsEnabled: (b: boolean) => void;
   setPaletteOpen: (b: boolean) => void;
@@ -144,6 +152,8 @@ export const useUIStore = create<UIState>()(
       openProjects: [],
       sidebarCollapsed: false,
       sidebarWidth: 264,
+      sidebarMode: "expanded",
+      sidebarWideWidth: 0,
       search: "",
       terminalFontSize: 13,
       notificationsEnabled: true,
@@ -161,8 +171,20 @@ export const useUIStore = create<UIState>()(
       setSearch: (s) => set({ search: s }),
       toggleSidebar: () =>
         set((st) => ({ sidebarCollapsed: !st.sidebarCollapsed })),
+      toggleSidebarMode: () =>
+        set((st) => ({
+          sidebarMode: st.sidebarMode === "expanded" ? "compact" : "expanded",
+          sidebarCollapsed: false,
+        })),
       setSidebarWidth: (w) =>
         set({ sidebarWidth: Math.max(200, Math.min(420, w)) }),
+      setSidebarWideWidth: (w) =>
+        set({
+          sidebarWideWidth: Math.max(
+            360,
+            Math.min(Math.round(window.innerWidth * 0.45), w),
+          ),
+        }),
       setTerminalFontSize: (n) =>
         set({ terminalFontSize: Math.max(12, Math.min(15, n)) }),
       setNotificationsEnabled: (b) => set({ notificationsEnabled: b }),
@@ -442,6 +464,8 @@ export const useUIStore = create<UIState>()(
         openProjects: st.openProjects,
         sidebarCollapsed: st.sidebarCollapsed,
         sidebarWidth: st.sidebarWidth,
+        sidebarMode: st.sidebarMode,
+        sidebarWideWidth: st.sidebarWideWidth,
         terminalFontSize: st.terminalFontSize,
         notificationsEnabled: st.notificationsEnabled,
         commitStyle: st.commitStyle,

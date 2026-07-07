@@ -116,6 +116,7 @@ function migrateTask(raw: TaskCard): TaskCard {
     body: t.body ?? "",
     projectId: t.projectId ?? null,
     prompt: typeof t.prompt === "string" ? t.prompt : null,
+    images: Array.isArray(t.images) ? t.images : [],
     createdAt: t.createdAt,
     doneAt: t.doneAt ?? null,
     order: t.order ?? 0,
@@ -125,12 +126,31 @@ function migrateTask(raw: TaskCard): TaskCard {
 
 let current: DeckState = structuredClone(DEFAULT_STATE);
 
-export function loadState(): DeckState {
+const bakFile = () => `${config.deckStateFile}.bak`;
+
+function parseStateFile(file: string): Partial<DeckState> | null {
   try {
-    if (fs.existsSync(config.deckStateFile)) {
-      const parsed = JSON.parse(
-        fs.readFileSync(config.deckStateFile, "utf8"),
-      ) as Partial<DeckState>;
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, "utf8")) as Partial<DeckState>;
+  } catch {
+    return null;
+  }
+}
+
+export function loadState(): DeckState {
+  // Corruption fallback: a truncated/garbled state.json (disk trouble, crash
+  // mid-write) must NOT silently reset to defaults — that loses every group,
+  // pin, and owned-session record. writeAtomic keeps a .bak of the last good
+  // file; try it before giving up.
+  let parsed = parseStateFile(config.deckStateFile);
+  if (!parsed && fs.existsSync(config.deckStateFile)) {
+    parsed = parseStateFile(bakFile());
+    if (parsed) console.warn("[state] state.json unreadable — recovered from .bak");
+  } else if (!parsed) {
+    parsed = parseStateFile(bakFile());
+  }
+  try {
+    if (parsed) {
       current = { ...structuredClone(DEFAULT_STATE), ...parsed };
       // ensure nested objects are complete (old state files predate these)
       current.prefs = { ...DEFAULT_STATE.prefs, ...(parsed.prefs ?? {}) };
@@ -164,6 +184,15 @@ function writeAtomic() {
       `state.tmp-${process.pid}-${current.version}`,
     );
     fs.writeFileSync(tmp, JSON.stringify(current, null, 2), "utf8");
+    // Keep the previous good file as .bak before swapping in the new one, so a
+    // corrupted state.json is recoverable (see loadState).
+    try {
+      if (fs.existsSync(config.deckStateFile)) {
+        fs.copyFileSync(config.deckStateFile, bakFile());
+      }
+    } catch {
+      /* backup is best-effort */
+    }
     fs.renameSync(tmp, config.deckStateFile);
   } catch (err) {
     console.warn("[state] save failed:", err);
